@@ -1,0 +1,36 @@
+# Git hooks for the learn corpus, run by Lefthook (https://lefthook.dev/).
+# Install once with: bun run prepare   (runs: lefthook install)
+#
+#   pre-commit   fast checks on the staged files only (format + lint)
+#   commit-msg   Conventional Commits enforcement (commitlint)
+#   pre-push     the CI-parity local gate: lint, format, typecheck, tests, build,
+#                glyph/link/convention
+#
+# The heavy gate (a pandoc build of every page) runs on push, not on every commit,
+# so committing stays fast while nothing un-gated ever reaches the remote.
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: oxfmt
+      glob: '*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,yml,yaml,css}'
+      run: bunx oxfmt --check {staged_files}
+    - name: oxlint
+      glob: '*.{ts,tsx,js,jsx,mjs,cjs}'
+      run: bunx oxlint {staged_files}
+    - name: markdownlint
+      glob: '*.md'
+      run: bunx markdownlint-cli2 {staged_files}
+    - name: prettier-markdown
+      glob: '*.md'
+      run: bun run tools/format-md.ts --check {staged_files}
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: bunx commitlint --edit {1}
+
+pre-push:
+  jobs:
+    - name: ci-local
+      run: bun run ci:local

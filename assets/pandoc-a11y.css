@@ -1,0 +1,160 @@
+/* pandoc-a11y.css — accessible defaults for the generated guide HTML.
+   Goals: high contrast, readable measure, never encode meaning in colour alone,
+   honour the reader's light/dark preference, keep semantic structure intact. */
+:root {
+  --fg: #16181d;
+  --bg: #ffffff;
+  --link: #0b3d91;
+  --code-bg: #f2f3f5;
+  --border: #5a5f6a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6e8ec;
+    --bg: #14161a;
+    --link: #9ec1ff;
+    --code-bg: #20242b;
+    --border: #8a909c;
+  }
+}
+html {
+  font-size: 1.05rem;
+}
+body {
+  color: var(--fg);
+  background: var(--bg);
+  font-family: system-ui, 'Segoe UI', Roboto, Arial, sans-serif;
+  line-height: 1.6;
+  max-width: 46rem;
+  margin: 2rem auto;
+  padding: 0 1rem;
+}
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.25;
+  margin: 1.6em 0 0.5em;
+}
+a {
+  color: var(--link);
+  text-decoration: underline;
+}
+a:focus,
+:focus-visible {
+  outline: 3px solid var(--link);
+  outline-offset: 2px;
+}
+/* Skip-to-content link: off-screen until focused, so a keyboard or screen-reader
+   user can jump past the table-of-contents nav straight to the main content. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--bg);
+  color: var(--link);
+  padding: 0.5rem 1rem;
+  border: 2px solid var(--link);
+  z-index: 100;
+}
+.skip-link:focus {
+  left: 0;
+}
+code,
+pre {
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 0.95em;
+}
+code {
+  background: var(--code-bg);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+pre {
+  background: var(--code-bg);
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  border-left: 4px solid var(--border);
+}
+pre code {
+  background: none;
+  padding: 0;
+}
+nav#TOC {
+  border: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  margin-bottom: 2rem;
+}
+table {
+  border-collapse: collapse;
+}
+th,
+td {
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.6rem;
+  text-align: left;
+}
+blockquote {
+  border-left: 4px solid var(--border);
+  margin: 1em 0;
+  padding: 0.2em 1rem;
+}
+/* Code blocks are wrapped (by a11y-enhance.lua) in
+   <blockquote class="code-block" aria-roledescription="code block"> so a screen
+   reader announces and navigates them as blocks; a bare <pre> is not announced.
+   Style it as a code container distinct from a prose blockquote -- a left accent in
+   the link colour rather than the quiet border colour -- and drop the inner <pre>'s
+   own border and margins so the two do not double up. */
+blockquote.code-block {
+  border-left: 4px solid var(--link);
+  background: var(--code-bg);
+  margin: 1em 0;
+  padding: 0.4rem 0.6rem;
+}
+blockquote.code-block .sourceCode {
+  margin: 0;
+}
+blockquote.code-block pre {
+  border-left: none;
+  margin: 0;
+}
+blockquote.code-block .code-toolbar {
+  margin: 0 0 0.3rem;
+}
+/* Copy-to-clipboard controls added by the script in the page template. One
+   toolbar with one real button sits just above each code block; the button is
+   keyboard-focusable (it inherits the global :focus-visible outline) and success
+   is announced via the aria-notify API, falling back to a visually hidden,
+   self-clearing live region (.sr-only) only where aria-notify is unavailable. */
+.code-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 1em 0 -0.4rem;
+}
+.copy-button {
+  font-family: inherit;
+  font-size: 0.85rem;
+  line-height: 1.2;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.25rem 0.7rem;
+  cursor: pointer;
+}
+.copy-button:hover {
+  background: var(--code-bg);
+}
+/* Visually hidden but available to assistive technology (the live status region,
+   and any other off-screen announcement text). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

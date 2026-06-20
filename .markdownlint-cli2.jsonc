@@ -1,0 +1,41 @@
+{
+  // Markdown linting for the whole corpus. Industry-default rules, tuned only
+  // where the project's accessibility and wrapping conventions require it.
+  //
+  // Division of labour: Prettier (via tools/format-md.ts) owns Markdown
+  // *formatting* -- prose reflow, blank lines, bullet markers, indentation.
+  // markdownlint owns *content correctness* -- bare URLs, missing code-fence
+  // languages, broken heading structure. The two are kept from fighting by
+  // matching options (dash bullets, 2-space list indent, a 120 cap above
+  // Prettier's 100-column wrap). No rule is disabled; rules are only tuned.
+  "config": {
+    "default": true,
+
+    // Prose wraps at 100 (Prettier), so 120 is a generous safety cap. Code
+    // blocks and tables cannot be reflowed, so they are exempt from the cap.
+    "MD013": { "line_length": 120, "code_blocks": false, "tables": false },
+
+    // Repeated headings are expected across sections (every guide has its own
+    // "Commands" and "Previous / Next" headings); only flag sibling duplicates.
+    "MD024": { "siblings_only": true },
+
+    // Hard tabs read poorly, but indented sample output inside fences is left
+    // exactly as authored.
+    "MD010": { "code_blocks": false },
+
+    // Bullet lists use "-" and nested lists indent by 2 spaces, matching the
+    // Prettier output so the formatter and linter never disagree.
+    "MD004": { "style": "dash" },
+    "MD007": { "indent": 2 },
+
+    // Prettier keeps a fenced code block tucked directly under its list item
+    // (no blank line between the "N." line and the fence) to hold the block
+    // inside the item. Still require blank lines around top-level fences, but
+    // not inside list items, so the formatter and linter never disagree.
+    "MD031": { "list_items": false },
+  },
+  // No "globs" key here on purpose: leaving it out lets the file arguments
+  // control scope, so the pre-commit hook lints only the staged files. The
+  // whole-repo glob lives in the "lint:md" package script instead.
+  "ignores": ["node_modules", "html", "tmp"],
+}

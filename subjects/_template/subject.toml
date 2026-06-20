@@ -1,0 +1,26 @@
+# Manifest for the subject template. Copy this folder to subjects/<your-subject>/,
+# rename it, and edit the fields below. See ADDING-A-SUBJECT.md at the repository
+# root for the full walkthrough, and tools/subjects.ts for the schema.
+
+name = "Subject Template"
+
+# Directories (subject-relative) built to accessible HTML and glyph-scanned.
+content_dirs = ["guides"]
+
+# Directories convention-linted (nav chain, ascii arrows, and any [[lint]] below).
+lint_dirs = ["guides"]
+
+[nav]
+# The endpoints of the Previous/Next spine: the first guide needs no "Previous:"
+# and the last needs no "Next:".
+no_prev = ["guides/00-welcome.md"]
+no_next = ["guides/01-first-task.md"]
+
+# A subject may declare line-lint rules here. Each matched line is one finding.
+# The template ships none; the Proxmox subject's subject.toml shows a real example
+# (its storage-id rule). Uncomment and adapt:
+#
+# [[lint]]
+# id = "example-rule"
+# message = "describe what to write instead"
+# patterns = ['''some-forbidden-token''']

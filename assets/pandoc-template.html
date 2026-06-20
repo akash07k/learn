@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"$if(lang)$ lang="$lang$" xml:lang="$lang$"$endif$$if(dir)$ dir="$dir$"$endif$>
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+$for(author-meta)$
+  <meta name="author" content="$author-meta$" />
+$endfor$
+$if(date-meta)$
+  <meta name="dcterms.date" content="$date-meta$" />
+$endif$
+$if(keywords)$
+  <meta name="keywords" content="$for(keywords)$$keywords$$sep$, $endfor$" />
+$endif$
+$if(description-meta)$
+  <meta name="description" content="$description-meta$" />
+$endif$
+  <title>$if(title-prefix)$$title-prefix$ – $endif$$pagetitle$</title>
+  <style>
+    $styles.html()$
+  </style>
+$for(css)$
+  <link rel="stylesheet" href="$css$" />
+$endfor$
+$for(header-includes)$
+  $header-includes$
+$endfor$
+$if(math)$
+  $math$
+$endif$
+</head>
+<body>
+<a href="#main-content" class="skip-link">Skip to main content</a>
+$for(include-before)$
+$include-before$
+$endfor$
+$if(title)$
+<header id="title-block-header">
+<h1 class="title">$title$</h1>
+$if(subtitle)$
+<p class="subtitle">$subtitle$</p>
+$endif$
+$for(author)$
+<p class="author">$author$</p>
+$endfor$
+$if(date)$
+<p class="date">$date$</p>
+$endif$
+$if(abstract)$
+<div class="abstract">
+<div class="abstract-title">$abstract-title$</div>
+$abstract$
+</div>
+$endif$
+</header>
+$endif$
+$if(toc)$
+<nav id="$idprefix$TOC" role="doc-toc" aria-label="Table of contents">
+$if(toc-title)$
+<h2 id="$idprefix$toc-title">$toc-title$</h2>
+$endif$
+$table-of-contents$
+</nav>
+$endif$
+<main id="main-content">
+$body$
+</main>
+$for(include-after)$
+$include-after$
+$endfor$
+<script>
+/* Add a Copy button to every code block in the main content. Designed to work
+   when the file is opened directly from disk (file://): it uses the async
+   Clipboard API when available and falls back to execCommand otherwise. It is
+   accessible by construction -- each button is a real, keyboard-focusable control
+   with a stable aria-label, and a successful copy is announced through the
+   aria-notify API (a one-shot announcement that leaves nothing behind in the page)
+   rather than by changing the button's accessible name. Where aria-notify is not
+   available it falls back to a polite live region that clears itself, so the
+   message never lingers at the end of the document. */
+(function () {
+  "use strict";
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      if (ok) { resolve(); } else { reject(new Error("copy command unavailable")); }
+    });
+  }
+  function stripTrailingNewlines(text) {
+    while (text.length) {
+      var last = text.charAt(text.length - 1);
+      if (last === "\n" || last === "\r") { text = text.slice(0, -1); } else { break; }
+    }
+    return text;
+  }
+  function selectContents(el) {
+    try {
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (e) {}
+  }
+  var liveRegion = null;
+  function announceViaLiveRegion(message) {
+    if (!liveRegion) {
+      liveRegion = document.createElement("div");
+      liveRegion.className = "sr-only";
+      liveRegion.setAttribute("role", "status");
+      liveRegion.setAttribute("aria-live", "polite");
+      document.body.appendChild(liveRegion);
+    }
+    liveRegion.textContent = "";
+    window.setTimeout(function () {
+      liveRegion.textContent = message;
+      window.setTimeout(function () {
+        if (liveRegion.textContent === message) { liveRegion.textContent = ""; }
+      }, 3000);
+    }, 50);
+  }
+  function notify(message) {
+    // Prefer the modern aria-notify API: it makes a one-shot announcement with no
+    // DOM node left behind, so nothing lingers at the end of the page. Where it is
+    // unavailable, fall back to a polite live region that clears itself.
+    if (typeof document.ariaNotify === "function") {
+      try { document.ariaNotify(message); return; } catch (e) {}
+    }
+    announceViaLiveRegion(message);
+  }
+  function ready() {
+    var pres = document.querySelectorAll("main pre");
+    Array.prototype.forEach.call(pres, function (pre) {
+      var code = pre.querySelector("code");
+      var toolbar = document.createElement("div");
+      toolbar.className = "code-toolbar";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "copy-button";
+      btn.setAttribute("aria-label", "Copy code to clipboard");
+      var label = document.createElement("span");
+      label.className = "copy-button-label";
+      label.textContent = "Copy";
+      btn.appendChild(label);
+      toolbar.appendChild(btn);
+      pre.parentNode.insertBefore(toolbar, pre);
+      btn.addEventListener("click", function () {
+        var text = stripTrailingNewlines((code ? code.textContent : pre.textContent) || "");
+        copyText(text).then(function () {
+          label.textContent = "Copied";
+          notify("Code copied to clipboard.");
+          window.setTimeout(function () { label.textContent = "Copy"; }, 2000);
+        }).catch(function () {
+          selectContents(code || pre);
+          label.textContent = "Select and copy";
+          notify("Automatic copy is unavailable. The code is now selected; press Control C to copy it.");
+          window.setTimeout(function () { label.textContent = "Copy"; }, 4000);
+        });
+      });
+    });
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", ready);
+  } else {
+    ready();
+  }
+})();
+</script>
+</body>
+</html>

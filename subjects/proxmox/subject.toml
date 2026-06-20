@@ -1,0 +1,38 @@
+# Manifest for the Proxmox subject. The shared tooling reads this; see
+# tools/subjects.ts for the schema and ADDING-A-SUBJECT.md for a walkthrough.
+
+name = "Proxmox VE Zero-to-Hero"
+
+# Directories (subject-relative) built to accessible HTML and glyph-scanned.
+# guides/ holds the numbered guides, cheatsheets, and recipes; docs/adr holds the
+# architecture decision records the guides cross-link to.
+content_dirs = ["guides", "docs/adr"]
+
+# Directories convention-linted (nav chain, ascii arrows, the storage lint below).
+# research/ is reference-only and is neither built nor linted.
+lint_dirs = ["guides"]
+
+[nav]
+# The numbered files (NN-...) form a single Previous/Next spine. These two are the
+# spine's endpoints, so they are allowed to omit one side of the chain.
+no_prev = ["guides/00-orientation.md"]
+no_next = ["guides/22-when-things-break.md"]
+
+# A guest disk, container rootfs, template (vztmpl), ISO, or snippet volid must use
+# the active local-btrfs storage, never the disabled `local` directory storage (the
+# plain `local` is disabled on a btrfs-root node). This rule is Proxmox-specific and
+# lives only here, so the generic engine never hardcodes a storage id.
+[[lint]]
+id = "storage-id"
+message = 'use the active "local-btrfs" storage, not the disabled "local"'
+patterns = [
+  '''--rootfs\s+local:''',
+  '''\brootfs\s*=\s*["']?local:''',
+  '''\bostemplate\s*=\s*["']?local:''',
+  '''\blocal:vztmpl''',
+  '''\blocal:snippets''',
+  '''\blocal:iso\b''',
+  '''\blocal:subvol''',
+  '''\blocal:\d''',
+  '''\bpve(?:sm|am)\s+\S+\s+local(?![-\w:])''',
+]
