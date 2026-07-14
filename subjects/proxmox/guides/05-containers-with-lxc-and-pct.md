@@ -91,10 +91,13 @@ Reading the options in turn:
   btrfs storage created by the btrfs-root install (the storage model is covered in guide
   [09 -- Storage](09-storage.md); note the plain `local` directory storage is disabled on this node
   and in any case carries no `rootdir` content type, so it cannot hold a container rootfs). Because
-  it is btrfs-backed, this becomes a btrfs subvolume, which is what makes the cheap snapshots later
-  in this guide possible. Proxmox expands this shorthand into a concrete volid in the config, so
-  `pct config` later shows it as `rootfs: local-btrfs:subvol-110-disk-0,size=8G` rather than the
-  `local-btrfs:8` you typed.
+  you asked for a fixed size, Proxmox stores this as a raw ext4 image (a `disk.raw` file) inside a
+  btrfs subvolume wrapper: the raw file enforces the 8 GiB cap, and the wrapping subvolume is what
+  keeps the snapshots later in this guide cheap and native. (A hard size cap on a bare btrfs
+  subvolume would need subvolume quotas, which Proxmox avoids because they interfere with
+  `btrfs send`, so it reaches for a raw file instead.) Proxmox expands the shorthand into a concrete
+  volid, so `pct config` later shows it as `rootfs: local-btrfs:110/vm-110-disk-0.raw,size=8G`
+  rather than the `local-btrfs:8` you typed.
 - `--net0 name=eth0,bridge=vmbr0,ip=192.168.1.110/24,gw=192.168.1.1` attaches an interface named
   `eth0` inside the container to the host bridge `vmbr0` and gives it a static LAN address and
   gateway. A fixed address is this corpus's default, so a service is always reachable at the same
@@ -127,6 +130,12 @@ container's `authorized_keys`, which shares the lockout caveat guide 02 raised f
 independent copy of your public key in `~/.ssh/authorized_keys2` so you are not locked out if the
 primary key file is ever unavailable, and remember that `pct enter` (below) is always there as a
 fallback door regardless.
+
+One optional tuning step fits here, right after creation. Because that rootfs is a raw ext4 image
+(see above), its first start after any future `pct rollback` stalls about 40 seconds on an ext4
+Multiple Mount Protection check. Now, while the container is freshly created and stopped, is the
+cleanest moment to strip that feature if you expect to lean on fast snapshot rollbacks; the ext4 MMP
+note under "Snapshots, clones, and templates" below has the why and the exact commands.
 
 ## Get inside and verify
 
@@ -174,7 +183,7 @@ The key options, as a readable list:
   is `100` (it was `1024` under the old cgroup v1).
 - `memory`: the RAM limit in MB (default 512).
 - `swap`: additional swap in MB.
-- `rootfs`: the root volume, for example `local-btrfs:subvol-110-disk-0,size=8G`.
+- `rootfs`: the root volume, for example `local-btrfs:110/vm-110-disk-0.raw,size=8G`.
 - `net0` through `net9`: network interfaces.
 - `features`: a comma list such as `nesting=1,keyctl=1`.
 - `onboot`: `1` to auto-start the container when the host boots.
@@ -199,8 +208,8 @@ swap: 512
 unprivileged: 1
 onboot: 1
 startup: order=2,up=30
-rootfs: local-btrfs:subvol-110-disk-0,size=8G
-mp0: local-btrfs:subvol-110-disk-1,mp=/var/lib/data,size=20G,backup=1
+rootfs: local-btrfs:110/vm-110-disk-0.raw,size=8G
+mp0: local-btrfs:110/vm-110-disk-1.raw,mp=/var/lib/data,size=20G,backup=1
 mp1: /srv/media,mp=/media,ro=1
 net0: name=eth0,bridge=vmbr0,ip=192.168.1.110/24,gw=192.168.1.1,tag=20,firewall=1
 features: nesting=1,keyctl=1
@@ -228,7 +237,7 @@ and included in backups. The mount-point line gives a storage volid, a mount pat
 container, a size, and optionally backup inclusion:
 
 ```text
-mp0: local-btrfs:subvol-110-disk-1,mp=/var/lib/data,size=20G,backup=1
+mp0: local-btrfs:110/vm-110-disk-1.raw,mp=/var/lib/data,size=20G,backup=1
 ```
 
 The mount path (`/var/lib/data` here) is yours to choose; it is just where the volume appears inside
@@ -353,6 +362,36 @@ container to one, and `pct delsnapshot` removes one. Snapshots only cover Proxmo
 (the root volume and any volume mounts); a bind mount is not a Proxmox volume, so it is not
 snapshotted. The snapshot metadata is recorded as `[snapname]` sections in `/etc/pve/lxc/110.conf`;
 never hand-edit those.
+
+A container's first `pct start` after a `pct rollback` can stall for roughly 40 seconds before the
+rootfs mounts, then be instant on every later start. This is deliberate Proxmox behaviour, not a
+fault: it formats a container's raw ext4 root filesystem with the `mmp` feature (ext4 Multiple Mount
+Protection), which stops the same image being mounted twice at once and corrupting it. On mount, MMP
+waits about twice its update interval whenever the on-disk MMP block looks like it might still be
+active, and a rollback restores an older image whose MMP block looks exactly that way, so the next
+mount runs the full wait. On this btrfs storage a sized container rootfs is a raw ext4 image
+(`vm-110-disk-0.raw`, wrapped in a btrfs subvolume so snapshots stay cheap), so it carries MMP and
+this delay. If you rely on fast rollbacks, strip the feature while the container is stopped:
+
+```bash
+pct stop 110
+LOOP=$(losetup -Pf --show "$(pvesm path local-btrfs:110/vm-110-disk-0.raw)")
+tune2fs -O ^mmp "$LOOP"                  # remove Multiple Mount Protection
+e2fsck -fy "$LOOP"                       # clear the stale MMP state it left behind
+tune2fs -l "$LOOP" | grep -i features   # confirm mmp is no longer listed
+losetup -d "$LOOP"
+```
+
+That is a one-time change and it survives future rollbacks. The cost is losing double-mount
+protection: low risk on this single node with no shared storage and no HA, but keep MMP if container
+images ever live on storage shared between nodes. Enabling MMP is intentional in Proxmox VE 9 with
+no per-container toggle, so stripping it after creation is one way to get fast rollbacks. The other
+is to avoid the ext4 layer entirely: create the rootfs unsized with `--rootfs local-btrfs:0`, which
+allocates a bare btrfs subvolume (`subvol-110-disk-0`) instead of a raw ext4 image, so there is no
+ext4 and no MMP at all. The trade-off is that an unsized subvolume has no hard capacity cap, so a
+runaway container can grow into the whole btrfs pool, whereas the sized raw ext4 image (the default)
+caps it. Pick the size cap if isolation matters, the unsized subvolume if fast rollbacks and the
+simplest snapshot path matter more.
 
 Note that a snapshot on the same disk as the original is not a backup; it dies with the disk.
 Backups are a later guide.
