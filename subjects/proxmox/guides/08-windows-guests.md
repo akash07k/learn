@@ -37,8 +37,8 @@ You will need three pieces of media on the host before you build the VM:
 
 This guide builds directly on guide 06 ("Virtual machines with qm"). The shared `qm` machinery (OVMF
 and the `efidisk0`, `virtio-scsi-single`, the guest agent, snapshots, clones, disk import,
-downloading ISOs with `pvesm download-iso`) is taught there and not repeated here. Read guide 06
-first if you have not.
+downloading ISOs with the storage `download-url` API) is taught there and not repeated here. Read
+guide 06 first if you have not.
 
 ## Why Windows is different
 
@@ -72,7 +72,7 @@ guide.
 You need three images on a Proxmox storage that carries the `iso` content type. On this btrfs node
 that is the active `local-btrfs` storage (the plain `local` directory storage is disabled, per guide
 09); its iso directory is on disk at `/var/lib/pve/local-btrfs/template/iso/`. Guide 06 covers
-fetching ISOs with `pvesm download-iso` and listing them with
+fetching ISOs with the storage `download-url` API and listing them with
 `pvesm list local-btrfs --content iso`.
 
 The Windows 11 ISO. Download the official image from Microsoft's
@@ -84,10 +84,11 @@ key.
 The `virtio-win.iso`. Windows Setup ships with no virtio-scsi and no virtio-net driver, so without
 these drivers the installer sees no disk to install onto and no network. The canonical upstream that
 Proxmox points to is the Fedora-hosted build. Download the always-latest stable ISO straight into
-the host's iso storage:
+the host's iso storage with the storage `download-url` API (run on the host):
 
 ```bash
-pvesm download-iso local-btrfs virtio-win.iso \
+pvesh create /nodes/$(hostname)/storage/local-btrfs/download-url \
+ --content iso --filename virtio-win.iso \
  --url https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
 ```
 
@@ -203,41 +204,109 @@ bios: ovmf
 boot: order=scsi0
 cores: 4
 cpu: host
-efidisk0: local-btrfs:vm-9300-disk-0,efitype=4m,ms-cert=2023k,pre-enrolled-keys=1,size=528K
-machine: pc-q35-11.0
+efidisk0: local-btrfs:9300/vm-9300-disk-0.raw,efitype=4m,ms-cert=2023k,pre-enrolled-keys=1,size=528K
+machine: pc-q35-11.0+pve1
 memory: 8192
 name: win11-desktop
 net0: virtio=BC:24:11:DE:AD:BE,bridge=vmbr0
 numa: 0
 ostype: win11
 scsihw: virtio-scsi-single
-scsi0: local-btrfs:vm-9300-disk-1,iothread=1,discard=on,ssd=1,cache=writeback,size=64G
+scsi0: local-btrfs:9300/vm-9300-disk-2.raw,iothread=1,discard=on,ssd=1,cache=writeback,size=64G
 serial0: socket
 sockets: 1
-tpmstate0: local-btrfs:vm-9300-disk-2,size=4M,version=v2.0
+tpmstate0: local-btrfs:9300/vm-9300-disk-1.raw,size=4M,version=v2.0
 vga: std
 vmgenid: a1b2c3d4-0000-0000-0000-000000000001
 ```
 
-For Windows, PVE pins the machine version (here `pc-q35-11.0`) at create time and keeps it stable
-across host upgrades, because Windows reacts badly to its virtual chipset changing underneath it (it
-can force driver re-enumeration or even reactivation). The pinned number tracks the QEMU version
-current when you created the VM, not the PVE version: PVE 9.2 ships QEMU 11.0, so a Windows VM
-created on it pins `pc-q35-11.0` (an earlier PVE 9 point release on QEMU 10.x would pin
-`pc-q35-10.x`). The exact value does not matter; what matters is that it is pinned and you do not
-change it casually. Linux guests track `latest`; Windows stays pinned. Read the
+For Windows, PVE pins the machine version (here `pc-q35-11.0+pve1`) at create time and keeps it
+stable across host upgrades, because Windows reacts badly to its virtual chipset changing underneath
+it (it can force driver re-enumeration or even reactivation). The base number tracks the QEMU
+version current when you created the VM, not the PVE version: PVE 9.2 ships QEMU 11.0, so a Windows
+VM created on it pins `pc-q35-11.0` (an earlier PVE 9 point release on QEMU 10.x would pin
+`pc-q35-10.x`). PVE then appends its own downstream hardware revision, `+pveN`, which is why the
+config above reads `pc-q35-11.0+pve1`; that suffix is set for you and bumps only when Proxmox
+changes a machine default. The exact value does not matter; what matters is that it is pinned and
+you do not change it casually. Linux guests track `latest`; Windows stays pinned. Read the
 [QEMU Machine Version Upgrade wiki](https://pve.proxmox.com/wiki/QEMU_Machine_Version_Upgrade)
 before changing it.
+
+### Building without Secure Boot
+
+The build above turns Secure Boot on, which is the recommended default. If you specifically need
+Secure Boot off (to boot an unsigned bootloader, load unsigned drivers, or dual-boot another OS),
+you can build Windows 11 without it. Microsoft's requirement is "UEFI, Secure Boot capable", and for
+a VM "Secure boot capable, virtual TPM enabled" -- capable, not enabled (see
+[Windows 11 requirements](https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements)).
+The `efitype=4m` OVMF firmware is Secure-Boot-capable and the vTPM satisfies the TPM 2.0 rule, so
+Windows 11 still installs with Secure Boot inactive and no `LabConfig` registry bypass.
+
+Create the EFI disk with `pre-enrolled-keys=0` instead of `1`, and leave everything else (including
+`efitype=4m` and the vTPM) unchanged:
+
+```bash
+qm set $VMID --efidisk0 local-btrfs:1,efitype=4m,pre-enrolled-keys=0
+qm set $VMID --tpmstate0 local-btrfs:1,version=v2.0
+```
+
+With no keys enrolled the firmware is in Secure Boot "setup mode": it does not enforce signatures,
+so Secure Boot is effectively off, but the firmware is still Secure-Boot-capable, which is what the
+Windows 11 check wants. Understand the tradeoff before choosing this: Secure Boot off removes the
+boot-chain tamper protection, so keep it on unless you have a concrete reason not to.
+
+You can turn Secure Boot on later without rebuilding: shut the VM down and run
+`qm enroll-efi-keys <vmid>` to enroll Microsoft's keys into the existing EFI disk. Going the other
+way (on to off) means clearing the keys from inside the OVMF setup menu or recreating the EFI disk.
+
+### Enabling memory ballooning
+
+The create command above set `--balloon 0`, which disables ballooning for predictable memory. If you
+want the host to reclaim idle guest memory under pressure instead, enable it in two places: the VM
+config and the guest.
+
+First, set a balloon floor on the VM (a value greater than 0 and at most `memory`). With
+`memory: 8192` and a 4 GB floor, the guest boots seeing 8 GB and the host may reclaim down toward 4
+GB when it is under memory pressure:
+
+```bash
+qm set $VMID --balloon 4096
+```
+
+Second, the guest needs the VirtIO Balloon driver AND the balloon service running, or the config
+change does nothing and Windows can misreport its RAM. Both are installed by the VirtIO guest tools
+(`virtio-win-gt-x64.msi`), which the first-boot bootstrap already runs, so a VM built that way needs
+nothing more. If you installed the driver by hand, register the service from an elevated prompt in
+the guest using the `blnsvr.exe` the tools placed under `C:\Program Files\Virtio-Win\` (the exact
+subfolder depends on the build):
+
+```powershell
+& "C:\Program Files\Virtio-Win\Balloon\blnsvr.exe" -i
+```
+
+Verify from the host that the balloon device is live:
+
+```bash
+qm status $VMID --verbose
+```
+
+Once the driver and service are running the output includes a `ballooninfo` block with live guest
+memory stats; without them `ballooninfo` is absent and the reported `balloon` size never moves. On a
+Linux guest none of this applies: the `virtio_balloon` module is in the kernel and loads
+automatically, so setting the floor is all it takes (guide 06 covers the Linux side).
 
 ## Attach the install media
 
 Attach three CD-ROMs: the Windows ISO, the `virtio-win.iso` as a SECOND CD-ROM (so Setup can load
 the `vioscsi` storage driver it needs to see the virtio-scsi disk), and the `autounattend.xml`
-answer media. The virtio and answer ISOs go on a SATA bus, which the installer can read in-box (it
-has AHCI/IDE drivers built in):
+answer media. The virtio and answer ISOs go on a virtual SATA bus, which the installer can read with
+its in-box AHCI/IDE driver. Note that `ide2`, `sata0`, and `sata1` are controllers EMULATED inside
+the VM; they have nothing to do with your host's physical disk, which stays on `local-btrfs` (your
+NVMe SSD) either way. The ISOs ride SATA/IDE only because Windows Setup already has a driver for
+those emulated buses, but none for virtio-scsi until you load it.
 
 ```bash
-qm set $VMID --ide2 local-btrfs:iso/Win11_24H2_x64.iso,media=cdrom
+qm set $VMID --ide2 local-btrfs:iso/win11.iso,media=cdrom
 qm set $VMID --sata0 local-btrfs:iso/virtio-win.iso,media=cdrom
 qm set $VMID --sata1 local-btrfs:iso/autounattend.iso,media=cdrom
 ```
@@ -406,6 +475,109 @@ pre-enrolled keys, and UEFI, Windows 11's TPM, Secure Boot, and RAM checks pass 
 `LabConfig` registry bypass exists and the generators offer it, but on a correctly-built PVE Win11
 VM it is unnecessary. (You would only need it if you undersized RAM below 4 GB or skipped the vTPM.)
 
+## The full build in one block
+
+The sections above explain each command; this gathers the default unattended build into one
+copy-paste sequence for the recommended path (an `autounattend.xml` answer disk, `vga std`, and RDP
+afterward). It configures the VM but does NOT start it; you start it in the last step below, after
+applying any of the variations. It assumes the ISOs are already on the `local-btrfs` iso storage
+(see "Get the media") and that you have built the `autounattend.iso` answer disk (see "The
+autounattend.xml answer file"). Adjust the id, ISO filenames, core count, and disk size to taste:
+
+```bash
+VMID=9300
+
+# 1. VM shell. Windows uses vga std with serial0 as an EXTRA channel, never vga serial0.
+qm create $VMID \
+ --name win11-desktop --ostype win11 \
+ --machine q35 --bios ovmf \
+ --cores 4 --sockets 1 --cpu host \
+ --memory 8192 --balloon 0 \
+ --scsihw virtio-scsi-single \
+ --net0 virtio,bridge=vmbr0 \
+ --agent enabled=1 \
+ --vga std \
+ --serial0 socket
+
+# 2. Firmware: EFI variables disk (Secure Boot on) and a vTPM 2.0.
+qm set $VMID --efidisk0 local-btrfs:1,efitype=4m,pre-enrolled-keys=1
+qm set $VMID --tpmstate0 local-btrfs:1,version=v2.0
+
+# 3. OS disk on the VirtIO SCSI bus (64 GiB, iothread + discard, writeback cache).
+qm set $VMID --scsi0 local-btrfs:64,iothread=1,discard=on,ssd=1,cache=writeback
+
+# 4. Install media: Windows ISO on ide2; virtio-win and the answer disk on SATA.
+qm set $VMID --ide2 local-btrfs:iso/win11.iso,media=cdrom
+qm set $VMID --sata0 local-btrfs:iso/virtio-win.iso,media=cdrom
+qm set $VMID --sata1 local-btrfs:iso/autounattend.iso,media=cdrom
+
+# 5. Boot order: CD first, disk second (the disk must stay listed for Setup's self-reboots).
+qm set $VMID --boot 'order=ide2;scsi0'
+```
+
+Apply any of these variations BEFORE you start the VM (none of them is hotpluggable); each is
+explained in full in the section named:
+
+- Secure Boot off: use `pre-enrolled-keys=0` on the `efidisk0` line (see "Building without Secure
+  Boot").
+- Memory ballooning: replace `--balloon 0` with a floor such as `--balloon 4096`, and install the
+  guest balloon service (see "Enabling memory ballooning").
+- A fixed IP address: unlike an LXC container's `pct create --net0 ...,ip=...,gw=...`, a VM's
+  `--net0` has no guest-IP option (Proxmox cannot set a full guest OS's network stack from outside),
+  so give the guest a static address inside Windows or a DHCP reservation (see "Give the guest a
+  fixed address"). The Linux equivalent is cloud-init's `ipconfig0` in guide 07.
+- Fully attended, no answer file: omit the `--sata1 ... autounattend.iso` line so nothing drives
+  Setup, and step through the installer yourself by ear over the SPICE console (next).
+
+To watch the install over the SPICE console with Narrator, give the VM a SPICE display and audio and
+grant the console token its ACL (this too must be applied before starting). It works with EITHER the
+unattended block above or the attended variant: the answer disk decides whether Setup runs itself,
+while the SPICE display and audio only let you see and hear it. Create the `spice@pve` user and
+token first (see "Attended install over the SPICE console"):
+
+```bash
+# Use the SPICE display and audio for the install, instead of --vga std:
+qm set $VMID --vga qxl
+qm set $VMID --audio0 device=ich9-intel-hda,driver=spice
+
+# Let the console token reach THIS VM (one-time; needs the spice@pve user + token):
+pveum acl modify /vms/$VMID --users 'spice@pve' --roles PVEVMUser
+pveum acl modify /vms/$VMID --tokens 'spice@pve!console' --roles PVEVMUser
+```
+
+With the config and any variations in place, start the unattended install:
+
+```bash
+qm start $VMID
+```
+
+If you set up the SPICE display above, open the console from the control station with
+`spice-connect.bat` and start Narrator; it speaks in the Windows installer whether or not an answer
+file is driving it, so you can follow an unattended install by ear. After the install, switch the
+display back for the RDP path. A `vga` (or `audio0`) change is not hotpluggable: it only takes
+effect on the next cold start, so shut the VM down first, then start it again before connecting over
+RDP:
+
+```bash
+qm shutdown $VMID
+qm set $VMID --vga std
+# The audio0 device is harmless to leave; remove it with: qm set $VMID --delete audio0
+qm start $VMID
+```
+
+Once Windows reaches the desktop, ask the guest agent for the VM's address from the host (the guest
+tools install the QEMU agent on first logon, and `--agent enabled=1` is already set above), then
+connect over RDP with NVDA speaking inside the guest (see "Connect over RDP" for the full path):
+
+```bash
+qm agent $VMID network-get-interfaces
+```
+
+Pick the IPv4 address on the `vmbr0` subnet from the JSON (skip loopback and link-local), then from
+the control station run `mstsc /v:<guest-ip>`. If the command errors that the agent is not running,
+the first-logon guest-tools install has not finished yet; wait and retry, or pin the address with a
+DHCP reservation (see "Give the guest a fixed address").
+
 ## Attended install over the SPICE console (no answer file)
 
 This section documents the fallback to the `autounattend.xml` path above. Use it when you do not
@@ -422,15 +594,17 @@ sighted assistance.
 The sub-steps below are ordered so you can follow them strictly top to bottom: configure the display
 and audio, handle the storage driver, set the boot order, start the VM, set up the client once
 (token, fingerprint, ports), fetch and connect, drive the installer by ear with Narrator, then
-restore the daily RDP display afterward.
+restore the daily RDP display afterward. The `qm` commands here reuse the `VMID=9300` shell variable
+you set when you created the VM; if your shell session has changed since then, run `VMID=9300` again
+first.
 
 ### Configure the VM display and audio for the install
 
 Set the display adapter to `qxl` and attach a SPICE audio device:
 
 ```bash
-qm set <vmid> --vga qxl
-qm set <vmid> --audio0 device=ich9-intel-hda,driver=spice
+qm set $VMID --vga qxl
+qm set $VMID --audio0 device=ich9-intel-hda,driver=spice
 ```
 
 Without an audio device the install is silent. The audio path requires `qxl`; a `std` or `serial0`
@@ -438,7 +612,7 @@ display will not carry sound. If the VM fails to start after these changes, try 
 device:
 
 ```bash
-qm set <vmid> --audio0 device=intel-hda,driver=spice
+qm set $VMID --audio0 device=intel-hda,driver=spice
 ```
 
 After the install completes you switch back to `std` for the RDP path (covered in "After the
@@ -459,24 +633,25 @@ driver set itself is the same one described in the `autounattend.xml` section ab
 The SATA bus-swap approach (optional). Give the install disk a SATA bus for the duration of Setup so
 Setup sees it natively with its in-box AHCI driver, then swap it back to VirtIO afterward. This is a
 full two-way change, not a one-way trap, so both directions are given. First read the backing-store
-path (the `<storage>:<disk-id>` value, for example `local-btrfs:vm-9300-disk-1`) from the config:
+path (the `<storage>:<disk-id>` value, for example `local-btrfs:9300/vm-9300-disk-2.raw`) from the
+config:
 
 ```bash
-qm config <vmid> # note the scsi0 backing-store path
+qm config $VMID # note the scsi0 backing-store path
 ```
 
 Forward, before the install (move the disk from the SCSI bus to a SATA bus):
 
 ```bash
-qm set <vmid> --sata0 local-btrfs:vm-9300-disk-1
-qm set <vmid> --delete scsi0
+qm set $VMID --sata0 local-btrfs:9300/vm-9300-disk-2.raw
+qm set $VMID --delete scsi0
 ```
 
 Reverse, after the install (move it back to the VirtIO SCSI bus):
 
 ```bash
-qm set <vmid> --scsi0 local-btrfs:vm-9300-disk-1,iothread=1,discard=on,ssd=1,cache=writeback
-qm set <vmid> --delete sata0
+qm set $VMID --scsi0 local-btrfs:9300/vm-9300-disk-2.raw,iothread=1,discard=on,ssd=1,cache=writeback
+qm set $VMID --delete sata0
 ```
 
 The bus change takes effect on the next VM start, and Windows re-enumerates the storage controller
@@ -490,7 +665,7 @@ or hear, and Windows Setup reboots itself one or more times during the install. 
 with the CD first and the system disk second:
 
 ```bash
-qm set <vmid> --boot 'order=ide2;scsi0'
+qm set $VMID --boot 'order=ide2;scsi0'
 ```
 
 (`ide2` is the Windows ISO drive and `scsi0` is the system disk used throughout this guide. Quote
@@ -527,8 +702,18 @@ Do these three steps once on the control station before your first connection:
 ```bash
 pveum user add spice@pve --comment 'SPICE console access'
 pveum user token add spice@pve console --privsep 1
-pveum acl modify /vms/<vmid> --tokens 'spice@pve!console' --roles PVEVMUser
+pveum acl modify /vms/$VMID --users 'spice@pve' --roles PVEVMUser
+pveum acl modify /vms/$VMID --tokens 'spice@pve!console' --roles PVEVMUser
 ```
+
+Note the two `acl modify` lines: with privilege separation on (`--privsep 1`), a token's effective
+rights are the intersection of the owning user's rights and the token's own rights (the intersection
+rule from guide 13). The freshly created `spice@pve` user has no rights anywhere, so granting the
+role to the token alone leaves the intersection empty and every `spiceproxy` call fails with
+`Permission check failed (/vms/<vmid>, VM.Console)`. Assign `PVEVMUser` on the VM to BOTH the user
+and the token so the intersection is non-empty. Confirm both bindings landed with `pveum acl list`
+before moving on. (A `--privsep 0` token would inherit the user's rights and need only the user
+binding, but a privilege-separated token is safer, so this guide keeps `--privsep 1`.)
 
 1. Get the node's TLS certificate SHA-256 fingerprint for the config file. Run this on the host (it
    prints the colon-separated fingerprint):
@@ -550,20 +735,21 @@ usual cause. If you run a host firewall (guide [11 -- Firewall](11-firewall.md))
 are allowed from your control station's address.
 
 After filling in the host address, node name, token ID, token secret, and fingerprint (see "The
-fetch tool"), confirm the config file ACLs are locked down so other users cannot read the token
-secret. The script now enforces this automatically each run; use this command to verify from the
-root of your local clone:
+fetch tool"), keep the config file private: the token secret is the only credential in it. It lives
+under the gitignored `tmp\` directory so it is never committed, and on Windows the tool restricts it
+to your account, SYSTEM, and Administrators on every run. That hardening is best-effort: if it fails
+it warns and carries on, so if you see that warning, tighten the file by hand with:
 
 ```powershell
-icacls "tmp\spice-console.config.psd1"
+icacls "tmp\spice-console.config.psd1" /inheritance:r /grant:r "$($env:USERNAME):(F)" "*S-1-5-18:(F)" "*S-1-5-32-544:(F)"
 ```
 
-You should see inheritance disabled and explicit allow rules for your current user, `SYSTEM`, and
-the local Administrators group only.
+Because the token is least-privilege (it can only open a SPICE console on one VM), a leak is far
+less damaging than a login password, but treat the file as private regardless.
 
-The script applies the same ACL hardening to the short-lived `tmp\console.vv` file it fetches for
-each connection. That file expires quickly, but while it is valid it is still console connection
-material, so treat it as private and leave it under gitignored `tmp\`.
+Each connection also writes a short-lived `tmp\console.vv` under the same gitignored `tmp\`
+directory. The tool restricts that file the same way. It expires quickly, but while it is valid it
+is still console connection material, so treat it as private too.
 
 ### Start the VM
 
@@ -571,7 +757,7 @@ Start the VM before you fetch a ticket. The spiceproxy API has no SPICE session 
 returns a hard error if you try to connect to one:
 
 ```bash
-qm start <vmid>
+qm start $VMID
 ```
 
 ### The fetch tool
@@ -588,23 +774,62 @@ On first run the tool writes a template config to `tmp/spice-console.config.psd1
 gitignored). It is a PowerShell data file (`.psd1`): the tool reads it as plain data with
 `Import-PowerShellDataFile`, never executing it as code, so the file that holds your token secret
 can never run commands. Fill in the host address, node name, token ID, token secret, and certificate
-fingerprint (retrieved above) between the `@{` and `}`, then lock down its permissions as shown
-above. Each connection fetches a fresh `console.vv` into the repo's `tmp/` directory because a SPICE
-ticket expires in roughly 30 seconds; the file is not reusable. With the VM running, run
+fingerprint (retrieved above) between the `@{` and `}`, and keep the file private as noted above.
+Each connection fetches a fresh `console.vv` into the repo's `tmp/` directory because a SPICE ticket
+expires in roughly 30 seconds; the file is not reusable. With the VM running, run
 `spice-connect.bat`; the console opens in `remote-viewer`.
+
+### If the SPICE console will not connect
+
+If `spice-connect.bat` shows no picture or errors out, check the usual causes first: the VM is
+running (`qm status $VMID`), the control station can reach the host on BOTH TCP 8006 (the API) and
+TCP 3128 (the SPICE proxy), and the token id, node name, and fingerprint in the config are correct.
+The `tmp\remote-viewer.err.log` the launcher writes usually names the failure.
+
+While you sort that out you are not blind to the machine: attach the serial line from the host to
+watch the firmware and boot phase as text.
+
+```bash
+qm terminal $VMID # exit with Ctrl-O (the letter O, not zero)
+```
+
+Be clear about what this gives you. Because the VM has `serial0: socket`, OVMF, the UEFI boot
+manager, and POST render over `qm terminal`, so you can confirm the VM is actually booting the
+installer and read any firmware error. But the Windows graphical installer never appears on serial,
+and SAC is not available until Windows is installed with EMS enabled, so here `qm terminal` is a
+diagnosis channel, not a way to drive Setup; the "Serial console for boot and recovery (EMS/SAC)"
+section below has the full picture. If SPICE stays broken, the `autounattend.xml` unattended path
+needs no console at all and is the more robust route.
 
 ### Operating remote-viewer by ear
 
-The hotkeys are baked into the `.vv` file, so you never need to reach the menus:
+The most important key is the one that gets you back to the host. `remote-viewer` uses SPICE's
+built-in ungrab, `Left Ctrl + Left Alt` (the two left-side keys pressed together), and the launcher
+deliberately leaves that default in place rather than remapping it, because it is the most reliable
+way off the guest on Windows. The launcher also passes two extra hotkeys with `--hotkeys`. You never
+need to reach the menus:
 
-- `Ctrl+Shift+F12` releases the keyboard back to the host (host NVDA begins speaking again).
-- `Ctrl+Shift+F11` toggles fullscreen.
+- `Left Ctrl + Left Alt` releases the keyboard back to the host (host NVDA begins speaking again).
+- `Shift+F11` toggles fullscreen.
 - `Ctrl+Alt+End` sends `Ctrl+Alt+Del` to the guest.
 
+One quirk to know: while the guest is actively holding the keyboard, only the low-level
+`Left Ctrl + Left Alt` ungrab is guaranteed to fire; the `Shift+F11` and `Ctrl+Alt+End` hotkeys, and
+the View menu, respond once the guest is not grabbing. So if `Shift+F11` seems dead, press
+`Left Ctrl + Left Alt` first to release, then `Shift+F11`. The View menu's "Full screen" item is the
+same toggle if you would rather use the menu.
+
 While the console has focus the keyboard is grabbed to the guest and host NVDA goes quiet. That is
-expected: you are listening to the guest. Press `Ctrl+Shift+F12` to step back out to the host at any
-time. Do not launch `remote-viewer` with `--kiosk`; kiosk mode locks the keyboard grab and window so
-the release-cursor key cannot get you back to the host, which would trap you in the guest console.
+expected: you are listening to the guest. Press `Left Ctrl + Left Alt` to step back out to the host
+at any time; if a stuck window ever ignores it, `Alt+Tab` away, or `Alt+F4` to close the console
+(the SPICE ticket is disposable, so just fetch a fresh one). Do not launch `remote-viewer` with
+`--kiosk`; kiosk mode locks the keyboard grab and window so no release key can get you back to the
+host, which would trap you in the guest console.
+
+`remote-viewer` prints a stream of harmless `GLib` and `GSpice` diagnostics on Windows (a missing
+`usbdk` USB-redirection driver, and enumeration of your installed apps). The launcher redirects them
+to `tmp\remote-viewer.out.log` and `tmp\remote-viewer.err.log` so they do not clutter the console;
+you can ignore both files unless you are debugging a connection.
 
 ### Starting Narrator
 
@@ -615,8 +840,8 @@ Wait until you hear the Narrator startup sound or SPICE audio activates, then pr
 `Win+Ctrl+Enter`. Narrator's own startup announcement -- "Narrator is loading" -- confirms it is
 running; if it stays silent, press the combination again. On Windows 11, Narrator is available from
 the very first screen (language selection), so the entire install is audible from the start. If
-several minutes pass with no audio at all, check that the VM is running (`qm status <vmid>`) and
-that the audio device is attached.
+several minutes pass with no audio at all, check that the VM is running (`qm status $VMID`) and that
+the audio device is attached.
 
 Narrator does not survive a reboot, and Windows Setup reboots itself one or more times during the
 install. Each reboot kills Narrator. When speech goes silent mid-install, that is usually a phase
@@ -666,15 +891,15 @@ display back to `std` for the RDP path. The display change takes effect on the n
 this while the VM is shut down and start it again before connecting over RDP:
 
 ```bash
-qm shutdown <vmid>
-qm set <vmid> --ide2 none,media=cdrom
-qm set <vmid> --boot 'order=scsi0'
-qm set <vmid> --vga std
-qm start <vmid>
+qm shutdown $VMID
+qm set $VMID --ide2 none,media=cdrom
+qm set $VMID --boot 'order=scsi0'
+qm set $VMID --vga std
+qm start $VMID
 ```
 
 The `audio0` device may be left in place or removed; RDP carries its own audio, so it is not needed
-for daily use. To remove it: `qm set <vmid> --delete audio0`.
+for daily use. To remove it: `qm set $VMID --delete audio0`.
 
 Then follow the "Connect over RDP" section below to set up NVDA and connect over RDP. (The
 "First-boot bootstrap" section assumes the autounattend `$OEM$` staging, so on this attended path
@@ -761,6 +986,42 @@ With the install done, the answer media has served its purpose: detach it (above
 wipe it along with any copy on the control station, since it still holds the cleartext admin
 password.
 
+## Give the guest a fixed address
+
+RDP is only convenient if the guest is always at the same address. There are two ways to pin it.
+
+The simplest is a DHCP reservation on your router or DNS server: leave Windows on DHCP (the default)
+and bind its MAC address (the `net0: virtio=...` value in the VM config, or `Get-NetAdapter` in the
+guest) to a fixed lease. Nothing changes inside Windows and the guest always gets the same address.
+This is the recommended path unless you have a reason to configure the guest itself. To find the
+address it currently holds (for example to set the reservation, or to RDP in before you pin it), ask
+the guest agent from the host with `qm agent $VMID network-get-interfaces` (see "Connect over RDP").
+
+The alternative is a static address configured inside Windows. Because the VirtIO NIC only works
+after `NetKVM` is installed (the guest tools), set this after the first-boot bootstrap has run. From
+an elevated PowerShell in the guest (over RDP, or baked into `SetupComplete.cmd`), find the adapter
+and assign the address, gateway, and DNS server:
+
+```powershell
+$if = (Get-NetAdapter -Physical | Where-Object Status -eq 'Up' | Select-Object -First 1).Name
+Set-NetIPInterface -InterfaceAlias $if -Dhcp Disabled
+New-NetIPAddress -InterfaceAlias $if -IPAddress 192.168.1.50 -PrefixLength 24 -DefaultGateway 192.168.1.1
+Set-DnsClientServerAddress -InterfaceAlias $if -ServerAddresses 192.168.1.1
+```
+
+Use your own address, prefix length (`24` is a `/24`, the `255.255.255.0` mask), gateway, and DNS
+server. To bake it into the unattended build, append the same steps to `SetupComplete.cmd` after the
+guest-tools MSI installs (so `NetKVM` exists), calling PowerShell from the batch file:
+
+```cmd
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$if=(Get-NetAdapter -Physical | Where-Object Status -eq 'Up' | Select-Object -First 1).Name; Set-NetIPInterface -InterfaceAlias $if -Dhcp Disabled; New-NetIPAddress -InterfaceAlias $if -IPAddress 192.168.1.50 -PrefixLength 24 -DefaultGateway 192.168.1.1; Set-DnsClientServerAddress -InterfaceAlias $if -ServerAddresses 192.168.1.1"
+```
+
+After a static address is set, connect with `mstsc /v:192.168.1.50` and it stays put across reboots.
+For a Linux guest the equivalent is cloud-init's `ipconfig0` (guide
+[07 -- Cloud-init templates](07-cloud-init-templates.md)) or the in-guest network config from guide
+[10 -- Networking](10-networking.md).
+
 ## Connect over RDP
 
 Once the guest tools are up, the guest agent can report the VM's IP. Read it from the host:
@@ -781,6 +1042,10 @@ mstsc /v:<guest-ip>
 
 Log in with the local user the answer file created. NVDA is already running and speaks inside the
 session. This is the daily-use desktop path: RDP in, NVDA talks, you work.
+
+For files that should outlive the VM, keep them off the OS disk: attach a persistent data disk (the
+disposable-OS pattern in guide [06 -- Virtual machines with qm](06-virtual-machines-with-qm.md)) or
+share a host directory into the guest (see "Sharing a host directory with virtiofs" below).
 
 ## Serial console for boot and recovery (EMS/SAC)
 
@@ -851,6 +1116,55 @@ what makes `agent: enabled=1` real: with it, `qm shutdown` becomes a clean guest
 and the host can report the guest's IP via `qm agent <vmid> network-get-interfaces`. The serial
 console is independent of the agent: keep both, because SAC over serial is your always-available
 recovery door even if the agent or the network is down.
+
+If you want data that outlives the VM itself -- rebuild or reinstall the desktop but keep the files
+-- attach a second disk as a data volume and reassign it to a keeper VM before you destroy this one.
+A disk attached the normal way is owned by the VM and is deleted with it, so the full pattern
+(attach, the deletion catch, and `qm disk move --target-vmid`) is worth reading before you build
+anything you care about: see guide [06 -- Virtual machines with qm](06-virtual-machines-with-qm.md),
+under "A persistent data disk".
+
+## Sharing a host directory with virtiofs
+
+virtiofs (guide [06 -- Virtual machines with qm](06-virtual-machines-with-qm.md)) shares a host
+directory into the guest with no NFS or SMB server, and because the data lives on the host it
+survives destroying the VM. On Windows it is officially a "Tech Preview": it works for moving plain
+data files in and out, but it is a user-mode filesystem (not NTFS) with rough edges, so do not put
+anything load-bearing on it. Known gaps include imperfect case-insensitivity and missing NTFS
+behaviour (some file attributes, alternate data streams, and full security descriptors), so treat it
+as "try it and verify".
+
+Create the directory mapping and attach `virtiofs0` on the host as guide 06 shows, with one Windows
+rule: do NOT set `expose-acl` (and do not rely on ACL passthrough). Windows cannot interpret
+virtiofs ACLs, and if you expose them the share does not appear in the guest at all. The default (no
+`expose-acl`, no `expose-xattr`) is what you want.
+
+Inside Windows, two pieces are needed on top of the VirtIO guest tools:
+
+- WinFsp, the user-mode filesystem layer virtiofs is built on. It is a separate install (from
+  winfsp.dev) with at least the "Core" feature selected, and it is NOT bundled with the VirtIO guest
+  tools; install it once in the guest.
+- The VirtIO-FS driver and service. The `viofs` driver and the `virtiofs.exe` service binary ship
+  with the guest-tools MSI already installed in the first-boot bootstrap; you just enable the
+  service.
+
+From an elevated PowerShell in the guest, set the service to start at boot and start it now (the
+space after `start=` is required by `sc.exe`):
+
+```powershell
+sc.exe config VirtioFsSvc start= auto
+sc.exe start VirtioFsSvc
+```
+
+The share then appears as a drive letter (the first free one counting down from Z:), and its files
+live in the host directory you mapped, untouched when the VM is deleted. If the `VirtioFsSvc`
+service does not exist, the guest-tools install did not register it: re-run the VirtIO guest-tools
+installer and include the VirtioFS component, or register it by hand from the `viofs` folder (its
+exact path depends on the build) with WinFsp already installed:
+
+```powershell
+sc.exe create VirtioFsSvc binPath= "C:\Program Files\Virtio-Win\VioFS\virtiofs.exe" start= auto depend= VirtioFsDrv
+```
 
 ## PVE 9 deltas and gotchas
 
@@ -958,6 +1272,8 @@ live.
   [Proxmox VE 9.1 release notes](https://www.proxmox.com/en/about/company-details/press-releases/proxmox-virtual-environment-9-1)
   for vTPM qcow2 snapshots.
 - Microsoft Learn:
+  [Windows 11 requirements](https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements)
+  (the firmware rule is "Secure Boot capable", not enabled),
   [Windows Setup automation overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)
   (answer-file search order, passes, `$OEM$`),
   [Automate Windows Setup](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/automate-windows-setup),
