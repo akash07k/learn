@@ -22,7 +22,7 @@ This document reports what is TRUE in PVE 9 and flags deltas from PVE 8 and new 
   appended as `[snapname]` sections - do not edit those by hand. A `lock:` line means an operation
   is in progress.
 - Disk _contents_ live in **storage** (for this target, `local-btrfs`), referenced from the conf by
-  volume ID (`local-btrfs:vm-100-disk-0`), not stored inline.
+  volume ID (`local-btrfs:100/vm-100-disk-0.raw`), not stored inline.
 - On-box authority: `man qm`, `man qm.conf`, `qm help`, `qm help <subcommand>`.
 
 Citations: [qm(1)](https://pve.proxmox.com/pve-docs/qm.1.html) ,
@@ -99,8 +99,9 @@ BTRFS single-node lab:
   keys (can be disabled in the OVMF menu).
 - **SCSI controller**: `scsihw: virtio-scsi-single` - the recommended controller; it gives each disk
   its own controller so **`iothread=1`** per disk works for best throughput.
-- **Disks**: `scsi0: local-btrfs:vm-100-disk-0,iothread=1,size=32G,discard=on,ssd=1`. `discard=on` +
-  `ssd=1` enable TRIM passthrough (good on BTRFS/SSD). `cache=none` (default) is safe and fast.
+- **Disks**: `scsi0: local-btrfs:100/vm-100-disk-0.raw,iothread=1,size=32G,discard=on,ssd=1`.
+  `discard=on` + `ssd=1` enable TRIM passthrough (good on BTRFS/SSD). `cache=none` (default) is safe
+  and fast.
 - **Network**: `net0: virtio,bridge=vmbr0` (optionally `,firewall=1,tag=<vlan>`). `virtio` is the
   high-performance NIC; needs virtio-net driver in guest (built into Linux).
 - **Guest agent**: `agent: enabled=1` (often written `agent: 1`). Lets PVE do graceful shutdown,
@@ -127,7 +128,7 @@ bios: ovmf
 boot: order=scsi0;net0
 cores: 4
 cpu: host
-efidisk0: local-btrfs:vm-9100-disk-0,efitype=4m,pre-enrolled-keys=1,size=528K
+efidisk0: local-btrfs:9100/vm-9100-disk-0.raw,efitype=4m,pre-enrolled-keys=1,size=528K
 machine: q35
 memory: 4096
 balloon: 2048
@@ -136,7 +137,7 @@ net0: virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1
 numa: 0
 ostype: l26
 scsihw: virtio-scsi-single
-scsi0: local-btrfs:vm-9100-disk-1,iothread=1,size=32G,discard=on,ssd=1
+scsi0: local-btrfs:9100/vm-9100-disk-1.raw,iothread=1,size=32G,discard=on,ssd=1
 serial0: socket
 sockets: 1
 vga: serial0
@@ -232,8 +233,10 @@ ISOs live under a storage with `iso` content. On this btrfs-root target that is 
 disabled. Download directly into the active storage:
 
 ```bash
-# Use the built-in helper (validates, shows in storage):
-pvesm download-iso local-btrfs debian-13.0.0-amd64-netinst.iso \
+# Use the storage download-url API (validates, shows in storage). There is no `pvesm download-iso`
+# subcommand; call the API with pvesh:
+pvesh create /nodes/$(hostname)/storage/local-btrfs/download-url \
+ --content iso --filename debian-13.0.0-amd64-netinst.iso \
  --url https://cdimage.debian.org/.../debian-13.0.0-amd64-netinst.iso \
  --checksum-algorithm sha256 --checksum <sha256sum>
 
@@ -414,8 +417,8 @@ qm set 9100 --scsi1 local-btrfs:0,import-from=/root/data.qcow2
 
 # B) Two-step: import as an 'unused' disk, then attach.
 qm disk import 9100 /root/data.qcow2 local-btrfs --format raw
-qm config 9100 | grep unused # e.g. unused0: local-btrfs:vm-9100-disk-2
-qm set 9100 --scsi1 local-btrfs:vm-9100-disk-2,iothread=1
+qm config 9100 | grep unused # e.g. unused0: local-btrfs:9100/vm-9100-disk-2.raw
+qm set 9100 --scsi1 local-btrfs:9100/vm-9100-disk-2.raw,iothread=1
 ```
 
 - `qm importdisk` is now just an **alias** for `qm disk import`.

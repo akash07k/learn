@@ -421,10 +421,13 @@ cd /var/lib/vz/template/iso
 wget https://cdimage.debian.org/.../debian-12.x.x-amd64-netinst.iso
 ```
 
-Or use the storage API downloader (verifies checksum):
+Or use the storage API downloader (verifies checksum). There is no `pvesm download-iso` subcommand;
+call the `download-url` storage API with `pvesh`:
 
 ```bash
-pvesm download-iso local <name>.iso --url <https-url> --checksum-algorithm sha256 --checksum <hash>
+pvesh create /nodes/$(hostname)/storage/local/download-url \
+ --content iso --filename <name>.iso --url <https-url> \
+ --checksum-algorithm sha256 --checksum <hash>
 ```
 
 List available ISOs: `pvesm list local --content iso`.

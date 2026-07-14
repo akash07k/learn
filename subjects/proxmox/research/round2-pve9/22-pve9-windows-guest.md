@@ -71,7 +71,8 @@ The conf keys (`/etc/pve/qemu-server/<vmid>.conf`) and their `qm` equivalents:
   [qm.conf(5)](https://pve.proxmox.com/pve-docs/qm.conf.5.html)
 - **`scsihw: virtio-scsi-single`** - recommended controller; one controller per disk so per-disk
   `iothread=1` actually parallelizes I/O.
-- **OS disk**: `scsi0: local-btrfs:vm-<vmid>-disk-N,iothread=1,discard=on,ssd=1,size=64G`.
+- **OS disk**:
+  `scsi0: local-btrfs:<vmid>/vm-<vmid>-disk-N.raw,iothread=1,discard=on,ssd=1,size=64G`.
   `discard=on`+`ssd=1` enable TRIM passthrough (good on BTRFS/SSD). The wiki recommends cache "Write
   back" for Windows performance; that is `cache=writeback` on the disk (raw default `cache=none` is
   also safe - writeback trades a little safety for speed). Give Win11 at least ~64 GB. Citation:
@@ -128,10 +129,12 @@ Get the ISO (Fedora-hosted, the canonical upstream that Proxmox points to):
   times recommends a specific version if a newer one has a regression - check it. Citation:
   [Windows VirtIO Drivers](https://pve.proxmox.com/wiki/Windows_VirtIO_Drivers)
 
-Download into an ISO storage on the host:
+Download into an ISO storage on the host. There is no `pvesm download-iso` subcommand; call the
+`download-url` storage API with `pvesh`:
 
 ```bash
-pvesm download-iso local-btrfs virtio-win.iso \
+pvesh create /nodes/$(hostname)/storage/local-btrfs/download-url \
+ --content iso --filename virtio-win.iso \
  --url https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso
 ```
 
@@ -408,7 +411,7 @@ qm set $VMID --tpmstate0 local-btrfs:1,version=v2.0
 qm set $VMID --scsi0 local-btrfs:64,iothread=1,discard=on,ssd=1,cache=writeback
 
 # 4. Three CD-ROMs: Windows ISO, virtio-win ISO, and the autounattend media.
-qm set $VMID --ide2 local-btrfs:iso/Win11_24H2_x64.iso,media=cdrom
+qm set $VMID --ide2 local-btrfs:iso/win11.iso,media=cdrom
 qm set $VMID --sata0 local-btrfs:iso/virtio-win.iso,media=cdrom
 qm set $VMID --sata1 local-btrfs:iso/autounattend.iso,media=cdrom
 
@@ -533,18 +536,18 @@ bios: ovmf
 boot: order=scsi0
 cores: 4
 cpu: host
-efidisk0: local-btrfs:vm-9300-disk-0,efitype=4m,ms-cert=2023k,pre-enrolled-keys=1,size=528K
-machine: pc-q35-11.0
+efidisk0: local-btrfs:9300/vm-9300-disk-0.raw,efitype=4m,ms-cert=2023k,pre-enrolled-keys=1,size=528K
+machine: pc-q35-11.0+pve1
 memory: 8192
 name: win11-desktop
 net0: virtio=BC:24:11:DE:AD:BE,bridge=vmbr0
 numa: 0
 ostype: win11
 scsihw: virtio-scsi-single
-scsi0: local-btrfs:vm-9300-disk-1,iothread=1,discard=on,ssd=1,cache=writeback,size=64G
+scsi0: local-btrfs:9300/vm-9300-disk-2.raw,iothread=1,discard=on,ssd=1,cache=writeback,size=64G
 serial0: socket
 sockets: 1
-tpmstate0: local-btrfs:vm-9300-disk-2,size=4M,version=v2.0
+tpmstate0: local-btrfs:9300/vm-9300-disk-1.raw,size=4M,version=v2.0
 vga: std
 vmgenid: a1b2c3d4-0000-0000-0000-000000000001
 ```

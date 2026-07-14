@@ -191,7 +191,7 @@ disabled state is normal, not the bug (see guide [09 -- Storage](09-storage.md))
 ```bash
 pvesm status                          # is local-btrfs active?
 pvesm list local-btrfs --vmid 100     # does the disk the config names actually exist?
-pvesm path local-btrfs:vm-100-disk-0  # resolve a volume to its real path, then ls -l it
+pvesm path local-btrfs:100/vm-100-disk-0.raw  # resolve a volume to its real path, then ls -l it
 ```
 
 Cross-check the config against those volumes to catch a bad hand-edit, and remember

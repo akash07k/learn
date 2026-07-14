@@ -426,7 +426,7 @@ containers, PVE resizes and grows the filesystem in one step for supported files
 pvesm status # all storages, active flag, usage
 pvesm status --content backup # only backup-capable stores
 pvesm list usb-backup # volumes/backups on the USB store
-pvesm path local-btrfs:vm-100-disk-0 # real path/device of a guest disk
+pvesm path local-btrfs:100/vm-100-disk-0.raw # real path/device of a guest disk
 cat /etc/pve/storage.cfg # the source of truth
 findmnt /mnt/usb-backup # confirm the mount is present
 lsblk -o NAME,SIZE,FSTYPE,UUID,MOUNTPOINT,SERIAL
