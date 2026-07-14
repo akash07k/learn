@@ -42,7 +42,7 @@ The mental model is small and worth holding in your head before you type anythin
   hand-edit.
 - The disk _contents_ live in storage (here `local-btrfs`, the btrfs storage; the storage model is
   taught in guide 09), referenced from the config by a volume id such as
-  `local-btrfs:vm-9100-disk-1`, not stored inline in the config.
+  `local-btrfs:9100/vm-9100-disk-1.raw`, not stored inline in the config.
 
 One honest pointer before you commit to this path. For the smoothest accessible install, you may
 prefer the cloud-init path in guide 07: a cloud image boots already configured and SSH-reachable
@@ -152,8 +152,12 @@ hand. The key options for a headless btrfs single node:
   Proxmox VE 9 default for a new VM is the portable `x86-64-v2-AES` model, which exists so a VM can
   migrate between different CPUs; you have one node and never migrate, so override it to `host`.
 - `memory: 4096` (in MiB) with optional `balloon: 2048`: ballooning lets the host reclaim memory
-  down to the `balloon` floor when it is under pressure. The guest needs the balloon driver (it
-  ships with the guest agent) for ballooning to actually shrink. `balloon: 0` disables it.
+  down to the `balloon` floor when it is under pressure. The guest needs the balloon driver for
+  ballooning to actually shrink; on Linux the `virtio_balloon` module is in the kernel and loads
+  automatically, so setting the floor is enough (a Windows guest needs the balloon driver and
+  service from the guest tools, covered in guide 08). `balloon: 0` disables it. Confirm it is live
+  with `qm status <vmid> --verbose`, which shows a `ballooninfo` block once the guest side is
+  running.
 - `machine: q35`: the modern PCIe machine type. Prefer it for new Linux guests and anything doing
   PCIe passthrough, over the older `i440fx` default.
 - `bios: ovmf` with a required `efidisk0`: choosing OVMF / UEFI firmware requires a small EFI
@@ -163,9 +167,10 @@ hand. The key options for a headless btrfs single node:
   from the OVMF menu later.
 - `scsihw: virtio-scsi-single`: the recommended SCSI controller, which gives each disk its own
   controller so a per-disk `iothread` works for the best throughput.
-- A disk line such as `scsi0: local-btrfs:vm-9100-disk-1,iothread=1,size=32G,discard=on,ssd=1`:
-  `iothread=1` pairs with `virtio-scsi-single`, and `discard=on` plus `ssd=1` enable TRIM
-  passthrough, which is the right choice on a btrfs-backed SSD.
+- A disk line such as
+  `scsi0: local-btrfs:9100/vm-9100-disk-1.raw,iothread=1,size=32G,discard=on,ssd=1`: `iothread=1`
+  pairs with `virtio-scsi-single`, and `discard=on` plus `ssd=1` enable TRIM passthrough, which is
+  the right choice on a btrfs-backed SSD.
 - `net0: virtio,bridge=vmbr0`: a virtio NIC (the high-performance type, built into the Linux kernel)
   on the host bridge `vmbr0`, the default Linux bridge created at install; networking and the
   default bridge are covered in guide 10. Append `,firewall=1` or `,tag=<vlan>` as needed.
@@ -186,7 +191,7 @@ bios: ovmf
 boot: order=scsi0;net0
 cores: 4
 cpu: host
-efidisk0: local-btrfs:vm-9100-disk-0,efitype=4m,pre-enrolled-keys=1,size=528K
+efidisk0: local-btrfs:9100/vm-9100-disk-0.raw,efitype=4m,pre-enrolled-keys=1,size=528K
 machine: q35
 memory: 4096
 balloon: 2048
@@ -195,7 +200,7 @@ net0: virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1
 numa: 0
 ostype: l26
 scsihw: virtio-scsi-single
-scsi0: local-btrfs:vm-9100-disk-1,iothread=1,size=32G,discard=on,ssd=1
+scsi0: local-btrfs:9100/vm-9100-disk-1.raw,iothread=1,size=32G,discard=on,ssd=1
 serial0: socket
 sockets: 1
 vga: serial0
@@ -215,15 +220,19 @@ ISOs live on a storage that carries the `iso` content type. On this btrfs node t
 [09 -- Storage](09-storage.md)); its iso directory is on the host disk at
 `/var/lib/pve/local-btrfs/template/iso/`.
 
-The preferred way to fetch one is `pvesm download-iso`, because it downloads straight into the
-storage and validates the checksum:
+The preferred way to fetch one is the storage `download-url` API, because it downloads straight into
+the storage's iso directory and validates the checksum. There is no `pvesm download-iso` subcommand
+(it does not exist in PVE 9); call the API endpoint with `pvesh` instead. This is the same endpoint
+the web UI's "Download from URL" button uses:
 
 ```bash
-pvesm download-iso local-btrfs debian-13-netinst.iso \
+pvesh create /nodes/$(hostname)/storage/local-btrfs/download-url \
+ --content iso --filename debian-13-netinst.iso \
  --url https://cdimage.debian.org/<path>/debian-13.0.0-amd64-netinst.iso \
  --checksum-algorithm sha256 --checksum <sha256sum>
 ```
 
+The `$(hostname)` expands to this node's name (the API path is per node); run it on the host itself.
 Copy the real URL and the published `sha256` sum from the Debian download page; the validation step
 is the point, so do not skip the `--checksum` arguments. If you would rather just fetch the file,
 `curl` it into the iso directory by hand:
@@ -416,13 +425,98 @@ attaching:
 ```bash
 qm disk import 9100 /root/data.qcow2 local-btrfs
 qm config 9100 | grep unused
-qm set 9100 --scsi1 local-btrfs:vm-9100-disk-2,iothread=1
+qm set 9100 --scsi1 local-btrfs:9100/vm-9100-disk-2.raw,iothread=1
 ```
 
 `qm disk import` lands the image as an `unused` disk in the config; the `grep` shows its volume id,
 and the final `qm set` attaches it. On btrfs, images land as raw files inside subvolumes, which is
 normal and what you want; do not force `--format qcow2` on a btrfs target. (For a whole-appliance
 OVA/OVF, the matching verb is `qm importovf`.)
+
+## A persistent data disk (surviving VM deletion)
+
+A common pattern is a disposable OS VM with data that must outlive it: rebuild or reinstall the
+machine, keep the data disk. Proxmox has no per-disk "keep on delete" flag (the VMware
+independent-persistent idea); a disk you attach normally is _owned_ by the VM and is deleted with
+it. Persisting one is a matter of decoupling it from the VM before you destroy the VM.
+
+Attach a second disk on its own bus slot, leaving the OS on `scsi0`:
+
+```bash
+# 100 GiB data disk on scsi1 (discard + SSD hints; not the boot disk)
+qm set 9100 --scsi1 local-btrfs:100,discard=on,ssd=1
+```
+
+That creates a volume named `local-btrfs:9100/vm-9100-disk-<n>.raw`, owned by VM 9100. The catch is
+deletion: `qm destroy 9100` removes the config AND every disk the VM owns, including any you have
+detached, because a detached disk is still referenced in the config as `unused0` and still carries
+the VM's id in its name. Detaching alone does not save it.
+
+The reliable way to keep the data is to reassign the disk to another VM before destroying this one.
+Create or pick a "keeper" VM (say 9999) that just holds the volume, then:
+
+```bash
+# 1. Detach the data disk (it becomes unused0 in 9100's config).
+qm set 9100 --delete scsi1
+
+# 2. Reassign that volume to the keeper VM, landing on its scsi1.
+qm disk move 9100 unused0 --target-vmid 9999 --target-disk scsi1
+
+# 3. Destroy the original VM; only its remaining owned disks go.
+qm destroy 9100
+```
+
+The volume is renamed to `9999/vm-9999-disk-<n>.raw` and lives on under the keeper. Later, reassign
+it back to a fresh VM the same way. This is the pattern for "the OS is disposable, the data is not."
+
+A few alternatives worth knowing:
+
+- A host directory shared with virtiofs (Proxmox VE 9.0+), covered in the next section: the data
+  lives in a host directory rather than a VM-owned volume, so it survives the VM without a separate
+  machine. This is the single-node option that fits the disposable-OS pattern best.
+- Shared or network storage instead of a VM-owned disk. Keep the data on an NFS or SMB share and
+  mount it inside the guest over the network. Then it is never a VM-owned volume, so destroying the
+  VM cannot touch it. That is the most decoupled option, at the cost of a network dependency and
+  storage outside this single node's `local-btrfs`.
+- Backups outlive the VM. A `vzdump` backup of the disk survives `qm destroy` and restores into a
+  new VM. That is recovery, not live persistence, but it is the safety net if you forget to reassign
+  before destroying.
+
+One caution: `qm destroy 9100 --destroy-unreferenced-disks` additionally sweeps any
+`9100/vm-9100-disk-*.raw` volumes still on storage, even ones not in the config. Only use that flag
+once you have already reassigned (and so renamed) anything you meant to keep.
+
+## Sharing a host directory with virtiofs
+
+virtiofs (Proxmox VE 9.0+) shares a directory from the host straight into a VM at near-native speed,
+with no NFS or SMB server in between. Because the data lives in a host directory and not a VM-owned
+volume, it is independent of the VM: destroy the VM and the directory and its contents stay. That
+makes it the single-node way to keep data across a rebuild without a separate NAS.
+
+Map a host path to a mapping id once (on the host), then attach it to the VM by that id:
+
+```bash
+# 1. Map a host path to a mapping id (per node).
+pvesh create /cluster/mapping/dir --id windata \
+  --map node=$(hostname),path=/srv/windata
+
+# 2. Attach it to the VM as virtiofs0.
+qm set 9100 --virtiofs0 dirid=windata,cache=auto,direct-io=1
+```
+
+Other knobs are `cache=always|metadata|never|auto`, `expose-xattr=1`, and `expose-acl=1` (a Windows
+guest must NOT set `expose-acl`, or the share will not appear in it; see guide 08). The `dirid` is
+the mapping id, not the path. Two things to know: a VM with a virtiofs device cannot live-migrate or
+hibernate (irrelevant on a single node), and the device needs a shared-memory backing, which Proxmox
+sets up for you when you attach it. On a Linux guest, mount the share with its mapping id as the
+tag:
+
+```bash
+mount -t virtiofs windata /mnt/windata
+```
+
+A Windows guest needs a driver and a service instead of a mount command; guide
+[08 -- Windows guests](08-windows-guests.md) covers the WinFsp and VirtIO-FS service steps.
 
 ## PVE 9 deltas to know
 
@@ -495,9 +589,9 @@ whole machine reachable as text; seeing them confirms the VM is built the access
   `machine: q35`, `bios: ovmf` plus the required `efidisk0` with `efitype=4m,pre-enrolled-keys=1`,
   `scsihw: virtio-scsi-single`, the `iothread=1,discard=on,ssd=1` disk line,
   `net0: virtio,bridge=vmbr0`, `agent: enabled=1`, `ostype: l26`, `boot: order=...`) and the full
-  example `9100.conf`; downloading ISOs with `pvesm download-iso` (checksum-validated) or `curl`
-  into `/var/lib/pve/local-btrfs/template/iso/` and `pvesm list local-btrfs --content iso`; the
-  end-to-end ISO build (`qm create` with the serial-first flags, `qm set` for `efidisk0`, the OS
+  example `9100.conf`; downloading ISOs with the storage `download-url` API (checksum-validated) or
+  `curl` into `/var/lib/pve/local-btrfs/template/iso/` and `pvesm list local-btrfs --content iso`;
+  the end-to-end ISO build (`qm create` with the serial-first flags, `qm set` for `efidisk0`, the OS
   disk, and the `ide2` CD-ROM, `--boot order=scsi0;ide2;net0`, `qm start`, `qm terminal`, then
   detaching the ISO); the guest agent on both host and guest sides; native btrfs snapshots
   (`qm snapshot`, `--vmstate 1`, `rollback`, `delsnapshot`) with the technology-preview and
