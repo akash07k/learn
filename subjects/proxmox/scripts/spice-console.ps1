@@ -20,18 +20,32 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# This script lives at subjects/proxmox/scripts/; the repo root is three levels up.
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
+$TmpDir = Join-Path $RepoRoot 'tmp'
+if (-not (Test-Path -LiteralPath $TmpDir)) {
+  New-Item -ItemType Directory -Path $TmpDir | Out-Null
+}
+
 function Protect-SecretFileAcl {
+  # Best-effort: restrict a secret file (the token config, the SPICE ticket) to the current user,
+  # SYSTEM, and Administrators so other local accounts on a shared machine cannot read it. Windows
+  # only -- Get-Acl/Set-Acl have no cross-platform equivalent, so this is a no-op elsewhere -- and
+  # non-fatal: a permissions hiccup warns rather than aborting a console launch. The token is
+  # already least-privilege (PVEVMUser on one VM), so treat this as defence in depth, not the only
+  # guard; the DESCRIPTION still tells the operator to keep the file private.
   param([Parameter(Mandatory = $true)][string]$Path)
+
+  if (-not $IsWindows) { return }
 
   try {
     $acl = Get-Acl -LiteralPath $Path
     $acl.SetAccessRuleProtection($true, $false)
     foreach ($rule in @($acl.Access)) {
-      $acl.RemoveAccessRuleSpecific($rule)
+      $null = $acl.RemoveAccessRuleSpecific($rule)
     }
-
-    $inheritance = [System.Security.AccessControl.InheritanceFlags]::None
-    $propagation = [System.Security.AccessControl.PropagationFlags]::None
+    $none = [System.Security.AccessControl.InheritanceFlags]::None
+    $prop = [System.Security.AccessControl.PropagationFlags]::None
     $allow = [System.Security.AccessControl.AccessControlType]::Allow
     $full = [System.Security.AccessControl.FileSystemRights]::FullControl
     $sids = @(
@@ -40,33 +54,22 @@ function Protect-SecretFileAcl {
       [System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')  # BUILTIN\Administrators
     )
     foreach ($sid in $sids) {
-      $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
-        $sid,
-        $full,
-        $inheritance,
-        $propagation,
-        $allow
-      )
-      $acl.AddAccessRule($rule)
+      $acl.AddAccessRule(
+        [System.Security.AccessControl.FileSystemAccessRule]::new($sid, $full, $none, $prop, $allow))
     }
     Set-Acl -LiteralPath $Path -AclObject $acl
   }
   catch {
-    throw "Could not harden ACLs on $Path. Fix file permissions before storing token secrets. $($_.Exception.Message)"
+    Write-Warning "Could not restrict permissions on $Path ($($_.Exception.Message)). It may be readable by other local users; keep it private or fix its ACLs by hand."
   }
-}
-
-# This script lives at subjects/proxmox/scripts/; the repo root is three levels up.
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' '..')).Path
-$TmpDir = Join-Path $RepoRoot 'tmp'
-if (-not (Test-Path -LiteralPath $TmpDir)) {
-  New-Item -ItemType Directory -Path $TmpDir | Out-Null
 }
 
 $ConfigPath = Join-Path $TmpDir 'spice-console.config.psd1'
 if (-not (Test-Path -LiteralPath $ConfigPath)) {
   @'
 # Proxmox SPICE console settings (gitignored). Fill these in, then re-run. See guide 08.
+# Keep this file private: it holds an API token secret. It lives under gitignored tmp/ so it is
+# never committed; do not copy it to a shared or multi-user location.
 # This is a PowerShell data file (.psd1): plain data only, never executed as code.
 @{
   PveHost        = '192.168.1.10'                          # node IP or hostname
@@ -76,9 +79,11 @@ if (-not (Test-Path -LiteralPath $ConfigPath)) {
   PveFingerprint = 'AA:BB:CC:DD:...:FF'                    # node TLS cert SHA-256 fingerprint
 }
 '@ | Set-Content -LiteralPath $ConfigPath -Encoding utf8
-  Protect-SecretFileAcl -Path $ConfigPath
-  throw "Wrote a config template to $ConfigPath. Fill it in (see guide 08), then re-run."
+  throw "Wrote a config template to $ConfigPath. Fill it in (see guide 08), then re-run. Keep it private: it holds an API token secret."
 }
+
+# Once filled in, the config holds a long-lived token secret; restrict it every run (the template
+# above only ever holds a placeholder, so hardening the real secret has to happen here on read).
 Protect-SecretFileAcl -Path $ConfigPath
 
 # Read the config as DATA, not code: Import-PowerShellDataFile uses PowerShell's
@@ -117,12 +122,37 @@ if ($expected.Length -ne 64) {
 }
 
 # HttpClient with certificate pinning by SHA-256 fingerprint (not a blanket skip).
+# The validation callback runs on a .NET thread-pool thread during the TLS handshake, where
+# no PowerShell runspace exists, so a PowerShell script block cannot be used here (it throws
+# "There is no Runspace available to run scripts in this thread" before TLS completes). Compile a
+# tiny pure-.NET type instead: its static method is a real delegate that runs correctly on any
+# thread. The expected fingerprint is passed through a static field.
+if (-not ('PveCertPinner' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System.Net.Http;
+using System.Net.Security;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+
+public static class PveCertPinner
+{
+    public static string Expected = "";
+
+    public static bool Validate(HttpRequestMessage request, X509Certificate2 cert, X509Chain chain, SslPolicyErrors errors)
+    {
+        if (cert == null) { return false; }
+        return string.Equals(
+            cert.GetCertHashString(HashAlgorithmName.SHA256),
+            Expected,
+            System.StringComparison.OrdinalIgnoreCase);
+    }
+}
+'@
+}
+[PveCertPinner]::Expected = $expected
+
 $handler = [System.Net.Http.HttpClientHandler]::new()
-$handler.ServerCertificateCustomValidationCallback = {
-  param($req, $cert, $chain, $errs)
-  if ($null -eq $cert) { return $false }
-  $cert.GetCertHashString([System.Security.Cryptography.HashAlgorithmName]::SHA256).ToUpperInvariant() -eq $expected
-}.GetNewClosure()
+$handler.ServerCertificateCustomValidationCallback = [PveCertPinner]::Validate
 $client = [System.Net.Http.HttpClient]::new($handler)
 # Fail fast instead of hanging if the host is wrong or filtered (the default is ~infinite for a
 # stalled connect, which is painful from the double-click launcher).
@@ -133,7 +163,12 @@ $response = $null
 try {
   $uri = "https://$($PveHost):8006/api2/spiceconfig/nodes/$PveNode/qemu/$VMID/spiceproxy"
   $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $uri)
-  $request.Headers.Add('Authorization', "PVEAPIToken=$PveTokenId=$PveTokenSecret")
+  # Use TryAddWithoutValidation: HttpRequestHeaders.Add parses Authorization as a structured
+  # scheme/parameter header and rejects the "PVEAPIToken=user@realm!name=secret" shape (the '=' and
+  # '!' fail its validation). Sending it verbatim is what the Proxmox API expects.
+  if (-not $request.Headers.TryAddWithoutValidation('Authorization', "PVEAPIToken=$PveTokenId=$PveTokenSecret")) {
+    throw "Could not set the Authorization header from the token in $ConfigPath. Check PveTokenId and PveTokenSecret."
+  }
   $form = [System.Collections.Generic.Dictionary[string, string]]::new()
   $form.Add('proxy', $PveHost)
   $request.Content = [System.Net.Http.FormUrlEncodedContent]::new($form)
@@ -162,20 +197,25 @@ if ($vv -notmatch '\[virt-viewer\]') {
 }
 
 # Bake in accessibility hotkeys and a clear window title (read by the screen reader).
-# Strip any values Proxmox already set for these keys so the override is the single
-# authoritative entry, rather than relying on the parser's last-value-wins behavior.
+# IMPORTANT: do NOT set release-cursor. SPICE's built-in ungrab is Left Ctrl + Left Alt, which is
+# the most reliable way off the guest on Windows; setting a custom release-cursor OVERRIDES that
+# default, and if the custom key does not fire (as some Windows builds do with function-key combos)
+# the operator is trapped in the guest. Leaving release-cursor unset keeps Left Ctrl + Left Alt.
+# Strip any release-cursor Proxmox set (so the default is restored) plus the keys we do override,
+# so each is the single authoritative entry rather than relying on last-value-wins.
 $vv = $vv -replace '(?m)^(release-cursor|toggle-fullscreen|secure-attention|title)=.*\r?\n?', ''
 $vv = $vv.TrimEnd() + @"
 
-release-cursor=ctrl+shift+f12
-toggle-fullscreen=ctrl+shift+f11
-secure-attention=ctrl+alt+end
-title=Proxmox SPICE install console (VM $VMID) -- Ctrl+Shift+F12 releases the keyboard
+toggle-fullscreen=Shift+F11
+secure-attention=Ctrl+Alt+End
+title=Proxmox SPICE install console (VM $VMID) -- Left Ctrl+Left Alt releases the keyboard
 
 "@
 
 $VvPath = Join-Path $TmpDir 'console.vv'
 Set-Content -LiteralPath $VvPath -Value $vv -Encoding utf8
+# The .vv carries a live (if short-lived) SPICE ticket; restrict it so another local user cannot
+# grab it from tmp/ during its validity window.
 Protect-SecretFileAcl -Path $VvPath
 
 if ($FetchOnly) {
@@ -183,5 +223,33 @@ if ($FetchOnly) {
   return
 }
 
-Start-Process -FilePath $VvPath
-Write-Host "Opening the SPICE console for VM $VMID. In the guest, press Win+Ctrl+Enter to start Narrator."
+# Launch remote-viewer with --hotkeys so the fullscreen/secure-attention keys are GLOBAL (effective
+# even while the guest holds focus). Deliberately omit release-cursor here so SPICE's built-in
+# Left Ctrl + Left Alt ungrab stays active as the reliable way back to the host. Find
+# remote-viewer.exe (PATH first, then the standard VirtViewer install dir); if it cannot be found,
+# fall back to opening the .vv by file association. remote-viewer prints a lot of harmless GLib and
+# GSpice diagnostics to stderr on Windows (missing usbdk, app enumeration); redirect its streams to
+# a log under tmp/ so they do not flood the launcher console.
+$Hotkeys = 'toggle-fullscreen=shift+f11,secure-attention=ctrl+alt+end'
+$rvCommand = Get-Command 'remote-viewer' -ErrorAction SilentlyContinue
+$remoteViewer = if ($rvCommand) { $rvCommand.Source } else { $null }
+if (-not $remoteViewer) {
+  foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+    if (-not $root) { continue }
+    $found = Get-ChildItem -Path (Join-Path $root 'VirtViewer*') -Filter 'remote-viewer.exe' -Recurse -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+    if ($found) { $remoteViewer = $found.FullName; break }
+  }
+}
+
+if ($remoteViewer) {
+  $rvOut = Join-Path $TmpDir 'remote-viewer.out.log'
+  $rvErr = Join-Path $TmpDir 'remote-viewer.err.log'
+  Start-Process -FilePath $remoteViewer -ArgumentList @("--hotkeys=$Hotkeys", $VvPath) -RedirectStandardOutput $rvOut -RedirectStandardError $rvErr
+  Write-Host "Opening the SPICE console for VM $VMID. Press Left Ctrl + Left Alt to release the keyboard back to the host. In the guest, press Win+Ctrl+Enter to start Narrator."
+}
+else {
+  Write-Warning "Could not find remote-viewer.exe, so opening $VvPath by file association instead. The fullscreen and secure-attention hotkeys may not be global, but Left Ctrl + Left Alt still releases the keyboard back to the host."
+  Start-Process -FilePath $VvPath
+  Write-Host "Opening the SPICE console for VM $VMID. Press Left Ctrl + Left Alt to release the keyboard back to the host. In the guest, press Win+Ctrl+Enter to start Narrator."
+}
