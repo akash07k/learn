@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "bun run tools/build-html.ts",
+    "build:changed": "bun run tools/build-html.ts --changed",
     "check": "bun run tools/check.ts",
     "lint:md": "markdownlint-cli2 \"**/*.md\"",
     "lint:js": "oxlint",

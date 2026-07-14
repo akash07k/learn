@@ -16,7 +16,7 @@
 //
 //     bun tools/build-html.ts
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import { discover, isDir, isFile, type Subject, SubjectError } from './subjects.ts';
 
@@ -92,8 +92,16 @@ function writeIndex(outDir: string, homes: [Subject, string | null][]): void {
   writeFileSync(join(outDir, 'index.html'), html, 'utf8');
 }
 
-/** Build every subject's Markdown to HTML. Returns the number of files built. */
-export function build(repoRoot: string, outDir?: string): number {
+/**
+ * Build every subject's Markdown to HTML. Returns the number of files built.
+ *
+ * When `incremental` is true, a page is rebuilt only if its output is missing or
+ * older than its source Markdown or than any shared asset (template, CSS, or Lua
+ * filter); up-to-date pages are skipped. This is an mtime comparison, so it does
+ * not depend on git state. The full-build default (`incremental = false`) is what
+ * the quality gate uses.
+ */
+export function build(repoRoot: string, outDir?: string, incremental = false): number {
   if (!Bun.which('pandoc')) {
     throw new BuildError('pandoc not found on PATH. Install pandoc and retry.');
   }
@@ -110,8 +118,15 @@ export function build(repoRoot: string, outDir?: string): number {
     }
   }
 
+  // A page is stale if it is older than its source or than any shared asset, so an
+  // edit to the template, CSS, or a Lua filter rebuilds every page in incremental mode.
+  const assetMtime = Math.max(
+    ...[css, template, linkFilter, a11yFilter].map((f) => statSync(f).mtimeMs),
+  );
+
   const discovered = discover(repoRoot);
   let built = 0;
+  let skipped = 0;
   const homes: [Subject, string | null][] = [];
   const glob = new Bun.Glob('**/*.md');
 
@@ -127,6 +142,13 @@ export function build(repoRoot: string, outDir?: string): number {
       for (const md of mds) {
         const rel = relative(subject.root, md).replaceAll('\\', '/').replace(/\.md$/, '.html');
         const outPath = join(out, subject.slug, rel);
+        if (incremental && isFile(outPath)) {
+          const outMtime = statSync(outPath).mtimeMs;
+          if (outMtime >= statSync(md).mtimeMs && outMtime >= assetMtime) {
+            skipped++;
+            continue;
+          }
+        }
         mkdirSync(dirname(outPath), { recursive: true });
         const cmd = [
           'pandoc',
@@ -174,13 +196,17 @@ export function build(repoRoot: string, outDir?: string): number {
 
   mkdirSync(out, { recursive: true });
   writeIndex(out, homes);
-  console.log(`Done. Built ${built} HTML file(s) for ${discovered.length} subject(s) into ${out}.`);
+  const skippedNote = incremental ? `, skipped ${skipped} up-to-date` : '';
+  console.log(
+    `Done. Built ${built}${skippedNote} HTML file(s) for ${discovered.length} subject(s) into ${out}.`,
+  );
   return built;
 }
 
 function main(): number {
+  const incremental = process.argv.includes('--changed') || process.argv.includes('--incremental');
   try {
-    build(dirname(import.meta.dir));
+    build(dirname(import.meta.dir), undefined, incremental);
   } catch (exc) {
     if (exc instanceof BuildError || exc instanceof SubjectError) {
       console.error(`BUILD FAILED: ${exc.message}`);
