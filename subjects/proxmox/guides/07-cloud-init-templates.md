@@ -244,6 +244,13 @@ qm set <id> --ipconfig0 ip6=auto
 qm set <id> --ipconfig0 ip=dhcp
 ```
 
+`ipconfig0` is cloud-init's mechanism, so it applies to a Linux VM built from a cloud image. Other
+guest types pin an address differently: a Windows VM has no `ipconfig0`, so you set a fixed address
+inside the guest or with a DHCP reservation (guide [08 -- Windows guests](08-windows-guests.md),
+"Give the guest a fixed address"), and an LXC container sets its address inline on
+`pct create --net0 ...,ip=...` (guide
+[05 -- Containers with LXC and pct](05-containers-with-lxc-and-pct.md)).
+
 ## Clone a service VM (per service)
 
 This is the part you repeat per service. Cloning a template defaults to a **linked clone**: instant,
