@@ -85,8 +85,11 @@ pct create 110 local-btrfs:vztmpl/debian-13-standard_13.x-1_amd64.tar.zst \
 
 Notes:
 
-- `--rootfs local-btrfs:8` means "allocate an 8 GiB root volume on storage `local-btrfs`". On a
-  BTRFS storage this becomes a BTRFS subvolume (so it supports cheap snapshots, see below).
+- `--rootfs local-btrfs:8` means "allocate an 8 GiB root volume on storage `local-btrfs`". With a
+  size, BTRFS stores this as a raw ext4 image (`vm-110-disk-0.raw`) inside a subvolume wrapper (the
+  wrapper keeps snapshots cheap; the raw ext4 carries the `mmp` feature, which adds a ~40s delay on
+  the first start after a rollback). Pass size 0 (`local-btrfs:0`) instead to get a bare BTRFS
+  subvolume (`subvol-110-disk-0`) with no size cap and no ext4/MMP.
 - `--unprivileged 1` is the default and the right choice for home services.
 - Static IP instead of DHCP: `--net0 name=eth0,bridge=vmbr0,ip=192.168.1.110/24,gw=192.168.1.1`.
 - Add a VLAN tag: append `,tag=20` to the `net0` string.
@@ -110,7 +113,8 @@ INI-ish text file, and is fully editable by hand (then `pct start`/`pct reboot` 
   roughly 1 - 10000). This replaced the v1 default of 1024.
 - `memory`: RAM limit in **MB** (default 512).
 - `swap`: additional swap in MB. With cgroup v2 this is enforced via `memory.swap.max`.
-- `rootfs`: the root volume, e.g. `rootfs: local-btrfs:subvol-110-disk-0,size=8G` on BTRFS.
+- `rootfs`: the root volume, e.g. `rootfs: local-btrfs:110/vm-110-disk-0.raw,size=8G` on BTRFS (a
+  bare `subvol-110-disk-0` only if created unsized with `local-btrfs:0`).
 - `mp0..mp255`: additional mount points (volume or bind - see below).
 - `net0..net9`: network interfaces (see below).
 - `unprivileged`: `1` (default, recommended) | `0` (privileged, needs `Sys.Modify` in PVE 9).
@@ -137,7 +141,7 @@ Common keys: `name=` (interface name inside CT), `bridge=` (host bridge, e.g. vm
 
 ```text
 # Volume mount (Proxmox-managed; allocated on a storage; supports snapshot/backup/quota):
-mp0: local-btrfs:subvol-110-disk-1,mp=/data,size=20G,backup=1
+mp0: local-btrfs:110/vm-110-disk-1.raw,mp=/data,size=20G,backup=1
 
 # Bind mount (share an existing HOST directory; NOT storage-managed):
 mp0: /srv/host-share,mp=/data
@@ -166,8 +170,8 @@ swap: 512
 unprivileged: 1
 onboot: 1
 startup: order=2,up=30
-rootfs: local-btrfs:subvol-110-disk-0,size=8G
-mp0: local-btrfs:subvol-110-disk-1,mp=/var/lib/data,size=20G,backup=1
+rootfs: local-btrfs:110/vm-110-disk-0.raw,size=8G
+mp0: local-btrfs:110/vm-110-disk-1.raw,mp=/var/lib/data,size=20G,backup=1
 mp1: /srv/media,mp=/media,ro=1
 net0: name=eth0,bridge=vmbr0,ip=192.168.1.110/24,gw=192.168.1.1,tag=20,firewall=1
 features: nesting=1,keyctl=1

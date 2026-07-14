@@ -922,7 +922,7 @@ placing them on the same network segment as the LAN. It is configured in `/etc/n
 ## volume mount
 
 A container mount point whose source is a Proxmox-managed storage volume (for example
-`mp0: local-btrfs:subvol-110-disk-1,mp=/data,size=20G`). Unlike a bind mount, a volume mount is
+`mp0: local-btrfs:110/vm-110-disk-1.raw,mp=/data,size=20G`). Unlike a bind mount, a volume mount is
 storage-managed, so it can be snapshotted, quota'd, and included in backups.
 
 ## vTPM (tpmstate0)

@@ -180,7 +180,7 @@ Workflow (host root shell), Debian 13 example:
 3. Import the disk: `qm disk import 9000 debian-13-genericcloud-amd64.qcow2 local-btrfs` (or, in PVE
    9, `qm set 9000 --scsi0 local-btrfs:0,import-from=<path>`).
 4. Attach it and a cloud-init drive:
-   `qm set 9000 --scsihw virtio-scsi-single --scsi0 local-btrfs:vm-9000-disk-0`
+   `qm set 9000 --scsihw virtio-scsi-single --scsi0 local-btrfs:9000/vm-9000-disk-0.raw`
    `qm set 9000 --ide2 local-btrfs:cloudinit`
 5. Boot/console: `qm set 9000 --boot order=scsi0 --serial0 socket --vga serial0` (the
    `serial0`/`vga serial0` pair is exactly what makes `qm terminal` serial-console access work -

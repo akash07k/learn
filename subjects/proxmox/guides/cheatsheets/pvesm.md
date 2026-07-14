@@ -48,9 +48,11 @@ which is wrong on a single node and breaks migration logic.
 
 ## Content (ISOs and templates)
 
-- `pvesm download-iso <storage> <volume-name> --url <url>` -- download an installer ISO straight
-  onto an `iso`-capable storage; add `--checksum <hash> --checksum-algorithm sha256` to verify the
-  download. This is the form guides 06 and 08 use.
+- There is no `pvesm download-iso` subcommand (it does not exist in PVE 9). To download an installer
+  ISO straight onto an `iso`-capable storage, call the storage `download-url` API with `pvesh`; add
+  `--checksum <hash> --checksum-algorithm sha256` to verify the download. Guides 06 and 08 show the
+  full command:
+  `pvesh create /nodes/$(hostname)/storage/<storage>/download-url --content iso --filename <name>.iso --url <url>`.
 
 The guide does not use `pvesm alloc` or `pvesm free`, so they are omitted here; VM and container
 disks are allocated for you by `qm`/`pct` and by the storage plugin.

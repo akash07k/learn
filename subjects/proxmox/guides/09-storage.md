@@ -193,6 +193,12 @@ and offline storage migration preserves these snapshots. The guest-facing snapsh
 [06 -- Virtual machines with qm](06-virtual-machines-with-qm.md), so reach for those for the guest
 workflow.
 
+One btrfs-specific gotcha lives with the container workflow: a sized container volume on btrfs is a
+raw ext4 image, which Proxmox formats with ext4 Multiple Mount Protection, so the container's first
+start after a `pct rollback` stalls about 40 seconds. Guide
+[05 -- Containers with LXC and pct](05-containers-with-lxc-and-pct.md) explains why and how to
+remove the feature if you rely on fast rollbacks.
+
 One thing bears repeating from the single-disk caveat: a snapshot on the same disk as the original
 is not a backup. It dies with the disk.
 

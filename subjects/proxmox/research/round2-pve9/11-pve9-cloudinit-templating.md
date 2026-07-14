@@ -157,8 +157,8 @@ Equivalent two-step form (if you prefer explicit import then attach):
 
 ```bash
 qm disk import 9000 /var/lib/pve/local-btrfs/template/iso/debian-13-genericcloud-amd64.qcow2 local-btrfs
-# to prints e.g. "imported ... as 'local-btrfs:vm-9000-disk-0'"; it lands UNUSED:
-qm set 9000 --scsi0 local-btrfs:vm-9000-disk-0,discard=on,ssd=1
+# prints e.g. "imported ... as 'local-btrfs:9000/vm-9000-disk-0.raw'"; it lands UNUSED:
+qm set 9000 --scsi0 local-btrfs:9000/vm-9000-disk-0.raw,discard=on,ssd=1
 ```
 
 Optionally grow the (typically small, ~2-3 GB) cloud image to a sane size now or per-clone later:
