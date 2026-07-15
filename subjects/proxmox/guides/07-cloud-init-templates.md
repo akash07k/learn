@@ -129,6 +129,8 @@ user-data (covered below), so `qm shutdown`, `qm agent`, and IP reporting work.
 By convention templates live in the 9000s; this one is VMID 9000. Do this part once. Each step is a
 single command, in order.
 
+### Create the bare VM
+
 First create the bare VM with the accessible defaults baked in:
 
 ```bash
@@ -156,6 +158,8 @@ here are:
   controller to be present.
 - `--ostype l26` marks the guest as modern Linux, which also makes `citype` default correctly.
 
+### Import and size the disk
+
 Next import the cloud image as the VM's disk. The Proxmox VE 9 one-shot `import-from` form imports
 and attaches in a single step (this is the same machinery as guide 06's disk import):
 
@@ -172,6 +176,8 @@ boot:
 qm disk resize 9000 scsi0 +18G
 ```
 
+### Add the cloud-init drive and boot order
+
 Add the cloud-init drive. The special `:cloudinit` syntax tells Proxmox to generate the config disk
 on that storage; `ide2` is the documented convention and keeps a scsi slot free:
 
@@ -184,6 +190,8 @@ Set the boot order to boot straight off the imported disk, which is faster and d
 ```bash
 qm set 9000 --boot order=scsi0
 ```
+
+### Bake in the baseline cloud-init values
 
 Now bake in the baseline cloud-init values, the settings that are the same for every clone.
 Per-clone bits (hostname and IP) you set after cloning:

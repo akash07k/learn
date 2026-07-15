@@ -271,8 +271,10 @@ shows up inside the container as `nobody:nogroup` and is unwritable, because hos
 the container's mapped range (100000 and up). The fix is to line up ownership across the mapping.
 There are two ways.
 
-Option A, chown the host directory to the mapped uid. If a service runs as uid 1000 inside the
-container, that is host uid 101000. So set the host directory's owner to that:
+### Option A: chown the host directory
+
+If a service runs as uid 1000 inside the container, that is host uid 101000. So set the host
+directory's owner to that:
 
 ```bash
 chown -R 101000:101000 /srv/host-share
@@ -281,9 +283,11 @@ chown -R 101000:101000 /srv/host-share
 This needs no config changes. The only oddity is that the host then shows the directory owned by a
 high uid (101000) rather than a friendly name.
 
-Option B, a custom `lxc.idmap` that punches a 1:1 hole so a real host uid lines up unchanged inside
-the container. This is the better choice when host and container must share a plain host uid such
-as 1005. It takes three edits.
+### Option B: a custom lxc.idmap
+
+A custom `lxc.idmap` punches a 1:1 hole so a real host uid lines up unchanged inside the container.
+This is the better choice when host and container must share a plain host uid such as 1005. It takes
+three edits.
 
 First, in the container config, replace the implicit full-range map with a split map. The example
 below maps host 1005 to container 1005. This is one of the rare cases where you hand-edit a pmxcfs
@@ -363,6 +367,8 @@ container to one, and `pct delsnapshot` removes one. Snapshots only cover Proxmo
 snapshotted. The snapshot metadata is recorded as `[snapname]` sections in `/etc/pve/lxc/110.conf`;
 never hand-edit those.
 
+### The 40-second stall after a rollback (ext4 MMP)
+
 A container's first `pct start` after a `pct rollback` can stall for roughly 40 seconds before the
 rootfs mounts, then be instant on every later start. This is deliberate Proxmox behaviour, not a
 fault: it formats a container's raw ext4 root filesystem with the `mmp` feature (ext4 Multiple Mount
@@ -395,6 +401,8 @@ simplest snapshot path matter more.
 
 Note that a snapshot on the same disk as the original is not a backup; it dies with the disk.
 Backups are a later guide.
+
+### Clone a container or make a template
 
 To copy a container, clone it:
 
