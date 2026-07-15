@@ -273,8 +273,8 @@ There are two ways.
 
 ### Option A: chown the host directory
 
-If a service runs as uid 1000 inside the container, that is host uid 101000. So set the host
-directory's owner to that:
+Chown the host directory to the mapped uid. If a service runs as uid 1000 inside the container, that
+is host uid 101000. So set the host directory's owner to that:
 
 ```bash
 chown -R 101000:101000 /srv/host-share
