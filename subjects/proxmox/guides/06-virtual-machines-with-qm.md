@@ -258,6 +258,8 @@ Now build VMID `9100` step by step. The order matters: the serial display goes i
 the required EFI disk and the OS disk come next, then the installer ISO, then you start and drive
 the install over serial.
 
+### Create the VM shell
+
 First create the VM shell with the serial-first display, q35, OVMF, `cpu: host`, virtio-scsi-single,
 the virtio NIC, and the guest agent enabled:
 
@@ -273,6 +275,8 @@ qm create 9100 \
  --serial0 socket --vga serial0
 ```
 
+### Add the EFI and OS disks
+
 Add the EFI variables disk, which OVMF requires:
 
 ```bash
@@ -287,13 +291,19 @@ qm set 9100 --scsi0 local-btrfs:32,iothread=1,discard=on,ssd=1
 
 Here `local-btrfs:32` means "allocate a 32 GiB disk on storage `local-btrfs`", and `local-btrfs:1`
 for the EFI disk is a placeholder size that Proxmox replaces with the correct tiny size for a `4m`
-vars store. Attach the installer ISO as a virtual CD-ROM and set the boot order to try the disk,
-then the CD, then the network:
+vars store.
+
+### Attach the installer ISO and set the boot order
+
+Attach the installer ISO as a virtual CD-ROM and set the boot order to try the disk, then the CD,
+then the network:
 
 ```bash
 qm set 9100 --ide2 local-btrfs:iso/debian-13-netinst.iso,media=cdrom
 qm set 9100 --boot 'order=scsi0;ide2;net0'
 ```
+
+### Start and drive the install
 
 Start the VM and attach to the serial line to drive the install:
 
