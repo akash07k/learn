@@ -123,8 +123,9 @@ The shared pieces (OVMF and the `efidisk0`, `virtio-scsi-single`, the guest agen
 is new and Windows-specific is the `ostype: win11`, the vTPM, the pinned machine version, and above
 all the display wiring.
 
-Create the VM shell. Note `--vga std` (NOT `--vga serial0`) plus `--serial0 socket` as the
-additional EMS/SAC channel:
+### Create the VM shell
+
+Note `--vga std` (NOT `--vga serial0`) plus `--serial0 socket` as the additional EMS/SAC channel:
 
 ```bash
 VMID=9300
@@ -158,6 +159,8 @@ A note on the options that differ from guide 06:
   Windows for predictable memory. If you want ballooning, install the balloon service and leave a
   conservative `balloon` floor instead.
 
+### Add the EFI disk and vTPM
+
 Add the EFI variables disk (Secure Boot, with Microsoft's keys pre-enrolled so the signed Windows
 bootloader is trusted out of the box) and the vTPM. Windows 11 requires a TPM 2.0, so the vTPM uses
 `version=v2.0`:
@@ -181,6 +184,8 @@ do not choose a TPM state format manually. PVE 9.1+ can also store TPM state as 
 file-level storages, which is what widens vTPM snapshot support beyond native snapshot-capable
 storage.
 
+### Add the OS disk
+
 Add the OS disk on btrfs, with iothread and discard. The wiki recommends cache "Write back" for
 Windows performance, so this disk uses `cache=writeback` (the raw default `cache=none` is also safe;
 writeback trades a little safety for speed). Give Win11 at least about 64 GiB:
@@ -188,6 +193,8 @@ writeback trades a little safety for speed). Give Win11 at least about 64 GiB:
 ```bash
 qm set $VMID --scsi0 local-btrfs:64,iothread=1,discard=on,ssd=1,cache=writeback
 ```
+
+### The full VM config
 
 A full example config follows. This is what `/etc/pve/qemu-server/9300.conf` looks like for the
 Windows 11 VM above. Note the contrast with guide 06's Linux example: there it was `vga: serial0`
@@ -437,12 +444,16 @@ File `Autounattend.xml` (at the root of the answer media):
 </unattend>
 ```
 
+### The cleartext admin password
+
 A note on that password: `PlainText=true` stores the account password as cleartext in the answer
 file (the base64 `PlainText=false` form is only obfuscation, not encryption). That answer file lives
 on the install media you built and on your control station, so once setup finishes: destroy or
 securely wipe the answer media and any local copy, and change the admin password after the first
 logon. Windows cleans the cached copy it writes to `C:\Windows\Panther`, but it does not touch your
 source media.
+
+### Enabling RDP from the answer file
 
 Enabling RDP is the load-bearing accessibility step. The declarative toggle in specialize
 (`fDenyTSConnections = false`, and `UserAuthentication = 1` to keep Network Level Authentication on)
@@ -469,6 +480,8 @@ NVDA in the same script.)
 RDP is not reachable DURING the OOBE phase; it only works once OOBE has completed and the account
 exists. With AutoLogon configured, OOBE completes automatically on first boot, so RDP comes up
 shortly after.
+
+### You do not need a hardware-check bypass
 
 You do NOT need a Win11 hardware-check bypass. Because the VM has a real vTPM v2.0, Secure Boot with
 pre-enrolled keys, and UEFI, Windows 11's TPM, Secure Boot, and RAM checks pass natively. The
@@ -960,6 +973,8 @@ documents `-s` as Secure Mode. Confirm the switches on the actual installer with
 [NVDA User Guide](https://download.nvaccess.org/documentation/userGuide.html), before you bake the
 recipe.
 
+### Start the install
+
 Now start the VM. The install runs hands-off; you can watch the firmware and boot phase over serial
 if you like, but you will NOT see the Windows GUI there:
 
@@ -967,6 +982,8 @@ if you like, but you will NOT see the Windows GUI there:
 qm start $VMID
 qm terminal $VMID # optional: watch OVMF/boot; the Windows GUI never appears here
 ```
+
+### Detach the media and destroy the answer disk
 
 When the install and first boot finish, the VM has RDP on, the guest tools installed, and NVDA
 running. Detach the install media and set the VM to boot from its disk:
