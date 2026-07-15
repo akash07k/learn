@@ -469,6 +469,24 @@ qm destroy 9100
 The volume is renamed to `9999/vm-9999-disk-<n>.raw` and lives on under the keeper. Later, reassign
 it back to a fresh VM the same way. This is the pattern for "the OS is disposable, the data is not."
 
+If you can plan ahead, skip the detach-and-reassign dance by giving the data disk the keeper's owner
+id from the start. Allocate the volume under the keeper VMID with `pvesm alloc`, then attach that
+existing volume to the working VM by its full volume id:
+
+```bash
+# 1. Pre-allocate a 100 GiB raw volume OWNED by keeper VM 9999 (note the 9999 in the name).
+pvesm alloc local-btrfs 9999 vm-9999-data.raw 100G --format raw
+
+# 2. Attach that existing volume to the working VM.
+qm set 9100 --scsi1 local-btrfs:9999/vm-9999-data.raw,discard=on,ssd=1
+```
+
+Now `qm destroy 9100` leaves the disk alone, because ownership is decided by the VMID embedded in
+the volume name (`vm-9999-...`), not by which VM the disk is attached to and not by whether you made
+it by hand. The one cost is a harmless warning about a foreign-owned volume in some `qm` operations
+(migration, rescan); on a single node it does not matter. Volume ids and ownership are covered in
+full in [09 -- Storage](09-storage.md).
+
 A few alternatives worth knowing:
 
 - A host directory shared with virtiofs (Proxmox VE 9.0+), covered in the next section: the data
