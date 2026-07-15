@@ -6,8 +6,10 @@ By the end of this guide you will understand the storage layer your guests sit o
 root and the one `local-btrfs` storage that backs everything, the honest limits of a single disk,
 and how to read true disk usage when `df` lies. You will be able to add an external USB disk three
 ways (as a directory, as btrfs, or as a ZFS pool), keep a removable disk healthy with
-export-before-unplug, and resize a guest disk. Backups themselves are Part F; this guide is about
-the storage layer they live on.
+export-before-unplug, and resize a guest disk. You will also be able to read a guest disk's volume
+id, know which guest owns it (and so what `qm destroy` will and will not delete), and pre-create a
+volume with `pvesm alloc`. Backups themselves are Part F; this guide is about the storage layer they
+live on.
 
 ## Before you start
 
@@ -615,6 +617,57 @@ The difference matters: after growing a VM disk you must extend the filesystem i
 afterward, whereas for a container Proxmox resizes and grows the filesystem in one step. The full
 guest workflow is in guides [05 -- Containers with LXC and pct](05-containers-with-lxc-and-pct.md)
 and [06 -- Virtual machines with qm](06-virtual-machines-with-qm.md).
+
+## Volume ids, ownership, and formats
+
+You reference every guest disk by a volume id (a volid), and the volid encodes two things: where the
+disk lives and which guest owns it. Reading one tells you what `qm destroy` will and will not
+delete.
+
+On this node's file-based `local-btrfs`, a guest volume looks like this:
+
+```text
+local-btrfs:9100/vm-9100-disk-0.raw
+```
+
+That is `STORAGE:VMID/vm-VMID-<name>.<format>`: the `9100/` path segment and the `vm-9100-` prefix
+both name VM 9100 as the owner, and the file is a raw image inside a per-disk btrfs subvolume. A
+block storage (for example a ZFS pool you add on a USB disk) writes volids the other way, with no
+path segment and no extension, as in `usbpool:vm-9100-disk-0`. Either way, the VMID in the name is
+the owner.
+
+Ownership is not cosmetic. When you run `qm destroy 9100` (or `pct destroy`), Proxmox frees the
+volumes owned by 9100 -- the ones whose name carries `9100`. A volume that is attached to 9100 but
+named for a different VMID is left alone. This is the whole mechanism behind the
+persistent-data-disk pattern in [06 -- Virtual machines with qm](06-virtual-machines-with-qm.md): a
+disk survives a VM's deletion only when its name carries a different owner id, not because you
+detached it and not because you created it by hand.
+
+You can pre-create a volume from the shell with `pvesm alloc`, which is how you hand a data disk a
+chosen owner before attaching it. The `<vmid>` argument sets the owner, and on a file storage the
+name must follow `vm-<vmid>-<name>.<format>`:
+
+```bash
+# a 100 GiB raw volume owned by VM 9999 on local-btrfs
+pvesm alloc local-btrfs 9999 vm-9999-data.raw 100G --format raw
+# -> local-btrfs:9999/vm-9999-data.raw
+```
+
+That volume now exists on the storage but is attached to nothing. Note the distinction: unattached
+is not the same as unowned. Every image volume has an owner VMID -- `pvesm alloc` requires one -- so
+there is no such thing as an ownerless disk; you can only leave one unattached. The owner id can
+even be a VMID with no VM behind it, which is how you park a data disk that no VM's `destroy` will
+reclaim until you attach it. `pvesm list local-btrfs` shows unattached volumes alongside the rest.
+
+Pass an empty name (`''`) to let Proxmox pick the next `vm-<vmid>-disk-N` for you. Delete a volume
+-- which really destroys its data -- with `pvesm free <volid>`.
+
+Two notes on format. First, btrfs stores VM images as raw files inside subvolumes and snapshots at
+the subvolume level, so raw is the right choice here; qcow2 is offered on file-based storage but
+buys you nothing on btrfs, and block storages (LVM, ZFS, Ceph) require raw regardless. Second,
+preallocation is a per-storage property (`off`, `metadata`, `falloc`, `full`; the default `metadata`
+behaves like `off` for raw images), set with `pvesm set local-btrfs --preallocation <mode>`. On a
+single copy-on-write btrfs disk it is rarely worth changing.
 
 ## Storage capability at a glance (readable lists)
 
